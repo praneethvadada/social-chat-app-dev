@@ -1,0 +1,96 @@
+@startuml Simplified Backend Architecture
+
+title Social Media Backend Architecture (Simplified)
+
+' Frontend Layer
+package "Frontend" as Frontend {
+    [React/Angular App] as FrontendApp
+    note right : Port: 3000/4200\nHTTPS/REST/WebSocket
+}
+
+' API Gateway
+package "API Gateway" as Gateway {
+    [Spring Cloud Gateway] as APIGateway
+    note right : Port: 8080\n- JWT Validation\n- Rate Limiting\n- Request Routing\n- CORS
+}
+
+' Microservices
+package "Authentication Service" as Auth {
+    [Auth Service] as AuthSvc
+    note right : Port: 8081\n- User Registration/Login\n- JWT Tokens\n- Password Reset\n- Email OTP\n- Account Management
+
+    database "Auth Tables" as AuthDB {
+        [users]
+        [user_roles]
+        [otp_verifications]
+        [password_reset_token]
+    }
+}
+
+package "Social Service" as Social {
+    [Social Service] as SocialSvc
+    note right : Port: 8082\n- Posts & Content\n- Real-time Chat\n- File Upload\n- Video Calls\n- Notifications
+
+    database "Social Tables" as SocialDB {
+        [posts]
+        [messages]
+        [followers]
+        [notifications]
+        [comments, likes]
+    }
+}
+
+' Data Layer
+package "Data Layer" as Data {
+    database "MySQL RDS" as MySQL
+    note right : auth_db\n21 Tables\nInnoDB Engine
+
+    database "Redis Cache" as Redis
+    note right : Session Cache\nRate Limiting\nReal-time Data
+}
+
+' External Services
+package "External Services" as External {
+    storage "AWS S3" as S3
+    note right : Media Storage\nProfile Pictures\nPost Images\nChat Media
+
+    cloud "Agora RTC" as Agora
+    note right : Video Calling\nWebRTC Infrastructure
+
+    cloud "SMTP Service" as Email
+    note right : Email Notifications\nOTP Emails
+}
+
+' Infrastructure
+package "AWS Infrastructure" as Infra {
+    rectangle "Load Balancer" as LB
+    rectangle "EC2 Instances" as EC2
+    rectangle "RDS Database" as RDS
+    rectangle "ElastiCache" as Cache
+    rectangle "S3 Storage" as S3Infra
+}
+
+' Connections
+FrontendApp --> APIGateway : HTTPS/WebSocket
+APIGateway --> AuthSvc : /api/auth/**
+APIGateway --> SocialSvc : /api/social/**
+
+AuthSvc --> MySQL : JPA/Hibernate
+SocialSvc --> MySQL : JPA/Hibernate
+
+AuthSvc --> Redis : Session Cache
+SocialSvc --> Redis : Real-time Data
+
+SocialSvc --> S3 : File Upload
+SocialSvc --> Agora : Video Calls
+AuthSvc --> Email : OTP Emails
+
+' Infrastructure connections
+APIGateway --> EC2
+AuthSvc --> EC2
+SocialSvc --> EC2
+MySQL --> RDS
+Redis --> Cache
+S3 --> S3Infra
+
+@enduml

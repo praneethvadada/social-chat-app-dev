@@ -1,0 +1,257 @@
+@startuml Social Media Database Schema Architecture
+
+title Social Media Database Schema (auth_db)
+
+package "Authentication & User Management" as Auth {
+    class users {
+        +id: BIGINT <<PK>>
+        +username: VARCHAR(50) <<UQ>>
+        +email: VARCHAR(100) <<UQ>>
+        +password: VARCHAR(255)
+        +full_name: VARCHAR(100)
+        +bio: VARCHAR(500)
+        +profile_picture: VARCHAR(255)
+        +enabled: BOOLEAN
+        +account_non_locked: BOOLEAN
+        +failed_login_attempts: INT
+        +last_login: DATETIME
+        +is_private: BOOLEAN
+        +is_verified: BOOLEAN
+        +is_online: BOOLEAN
+        +last_seen_at: DATETIME
+        +created_at: DATETIME
+        +updated_at: DATETIME
+    }
+
+    class user_roles {
+        +user_id: BIGINT <<PK>>
+        +role: VARCHAR(50) <<PK>>
+    }
+
+    class otp_verifications {
+        +id: BIGINT <<PK>>
+        +email: VARCHAR(255) <<UQ>>
+        +otp: VARCHAR(4)
+        +created_at: DATETIME
+        +expires_at: DATETIME
+        +is_used: BOOLEAN
+        +attempts: INT
+    }
+
+    class password_reset_token {
+        +id: BIGINT <<PK>>
+        +user_id: BIGINT
+        +token: VARCHAR(255) <<UQ>>
+        +expiry_date: DATETIME
+    }
+
+    class user_profile_extensions {
+        +id: BIGINT <<PK>>
+        +user_id: BIGINT <<UQ>>
+        +cover_photo_url: VARCHAR(500)
+        +location: VARCHAR(100)
+        +website: VARCHAR(200)
+        +date_of_birth: DATE
+        +is_private: BOOLEAN
+        +is_verified: BOOLEAN
+        +show_read_receipts: BOOLEAN
+        +show_activity_status: BOOLEAN
+        +created_at: DATETIME
+        +updated_at: DATETIME
+    }
+}
+
+package "Content & Social Features" as Content {
+    class posts {
+        +id: BIGINT <<PK>>
+        +user_id: BIGINT
+        +content: TEXT
+        +is_public: BOOLEAN
+        +visibility: ENUM(PUBLIC,CLOSE_FRIENDS)
+        +likes_count: INT
+        +comments_count: INT
+        +shares_count: INT
+        +saves_count: INT
+        +created_at: DATETIME
+        +updated_at: DATETIME
+    }
+
+    class post_images {
+        +id: BIGINT <<PK>>
+        +post_id: BIGINT
+        +image_url: VARCHAR(500)
+        +display_order: INT
+    }
+
+    class comments {
+        +id: BIGINT <<PK>>
+        +post_id: BIGINT
+        +user_id: BIGINT
+        +parent_comment_id: BIGINT
+        +content: TEXT
+        +created_at: DATETIME
+        +updated_at: DATETIME
+    }
+}
+
+package "Interactions" as Interactions {
+    class likes {
+        +id: BIGINT <<PK>>
+        +user_id: BIGINT
+        +target_type: ENUM(POST,COMMENT)
+        +target_id: BIGINT
+        +created_at: DATETIME
+    }
+
+    class shares {
+        +id: BIGINT <<PK>>
+        +user_id: BIGINT
+        +post_id: BIGINT
+        +created_at: DATETIME
+    }
+
+    class saves {
+        +id: BIGINT <<PK>>
+        +user_id: BIGINT
+        +post_id: BIGINT
+        +created_at: DATETIME
+    }
+}
+
+package "Social Graph" as SocialGraph {
+    class followers {
+        +id: BIGINT <<PK>>
+        +follower_id: BIGINT
+        +following_id: BIGINT
+        +created_at: DATETIME
+    }
+
+    class follow_requests {
+        +id: BIGINT <<PK>>
+        +requester_id: BIGINT
+        +receiver_id: BIGINT
+        +status: VARCHAR(20)
+        +created_at: DATETIME
+        +updated_at: DATETIME
+    }
+
+    class blocked_users {
+        +id: BIGINT <<PK>>
+        +blocker_id: BIGINT
+        +blocked_id: BIGINT
+        +created_at: DATETIME
+    }
+
+    class close_friends {
+        +id: BIGINT <<PK>>
+        +user_id: BIGINT
+        +close_friend_user_id: BIGINT
+        +created_at: DATETIME
+    }
+}
+
+package "Messaging & Communication" as Messaging {
+    class messages {
+        +id: BIGINT <<PK>>
+        +sender_id: BIGINT
+        +receiver_id: BIGINT
+        +content: TEXT
+        +media_url: VARCHAR(500)
+        +client_message_id: VARCHAR(255) <<UQ>>
+        +is_read: BOOLEAN
+        +read_at: DATETIME
+        +created_at: DATETIME
+        +updated_at: DATETIME
+    }
+
+    class chat_deletions {
+        +id: BIGINT <<PK>>
+        +user_id: BIGINT
+        +other_user_id: BIGINT
+        +deleted_at: DATETIME
+    }
+
+    class call_logs {
+        +id: BIGINT <<PK>>
+        +initiator_id: BIGINT
+        +receiver_id: BIGINT
+        +call_type: VARCHAR(10)
+        +status: VARCHAR(20)
+        +duration_seconds: INT
+        +deleted_for_initiator: BOOLEAN
+        +deleted_for_receiver: BOOLEAN
+        +created_at: DATETIME
+        +updated_at: DATETIME
+    }
+}
+
+package "System & Notifications" as System {
+    class notifications {
+        +id: BIGINT <<PK>>
+        +user_id: BIGINT
+        +type: VARCHAR(50)
+        +actor_id: BIGINT
+        +target_id: BIGINT
+        +content: TEXT
+        +is_read: BOOLEAN
+        +created_at: DATETIME
+    }
+
+    class schema_version {
+        +version: VARCHAR(20) <<PK>>
+        +applied_at: DATETIME
+        +description: TEXT
+    }
+}
+
+' Relationships
+users ||--o{ user_roles : has
+users ||--o{ otp_verifications : verifies
+users ||--o{ password_reset_token : resets
+users ||--|| user_profile_extensions : extends
+
+users ||--o{ posts : creates
+posts ||--o{ post_images : contains
+posts ||--o{ comments : has
+comments ||--o{ comments : replies
+
+posts ||--o{ likes : receives
+comments ||--o{ likes : receives
+posts ||--o{ shares : shared
+posts ||--o{ saves : saved
+
+users ||--o{ followers : follows
+users ||--o{ follow_requests : requests
+users ||--o{ blocked_users : blocks
+users ||--o{ close_friends : friends
+
+users ||--o{ messages : sends
+messages ||--o{ chat_deletions : deleted
+users ||--o{ call_logs : initiates
+
+users ||--o{ notifications : receives
+
+' Views and Triggers
+note right of posts : Denormalized counters\n(updated by triggers)
+note right of messages : Soft delete via\nchat_deletions table
+note right of call_logs : Independent deletion\nper participant
+
+' Indexes
+note as N1
+    Performance Indexes:
+    - User lookups (username, email)
+    - Social graph (follower/following)
+    - Content queries (user, visibility, time)
+    - Messaging (conversation, unread)
+end note
+
+' Constraints
+note as N2
+    Key Constraints:
+    - Unique relationships (follow, block, friend)
+    - Foreign key integrity
+    - ENUM validations
+    - Composite primary keys
+end note
+
+@enduml

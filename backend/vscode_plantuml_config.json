@@ -1,0 +1,23 @@
+// VS Code Settings for PlantUML Java Configuration
+// Add these settings to your VS Code User Settings (Ctrl+Shift+P -> "Preferences: Open User Settings (JSON)")
+
+{
+    // PlantUML Configuration
+    "plantuml.java": "C:\\Program Files\\Java\\jdk-17\\bin\\java.exe",
+    "plantuml.jar": "C:\\Users\\{username}\\.vscode\\extensions\\jebbs.plantuml-{version}\\plantuml.jar",
+
+    // Alternative: Use environment variable
+    // "plantuml.java": "java",
+
+    // Other PlantUML settings
+    "plantuml.exportFormat": "png",
+    "plantuml.exportOutDir": "./out",
+    "plantuml.exportSubFolder": false,
+    "plantuml.previewAutoUpdate": true
+}
+
+// Instructions:
+// 1. Replace {username} with your actual Windows username
+// 2. Find the PlantUML extension version in your VS Code extensions
+// 3. Add these settings to your User Settings JSON file
+// 4. Restart VS Code

@@ -1,0 +1,135 @@
+@startuml Social Media Backend Architecture
+
+title Social Media Backend Architecture
+
+package "Frontend Layer" as Frontend {
+    [React/Angular App\nPort: 3000/4200] as FrontendApp
+}
+
+package "API Gateway Layer" as Gateway {
+    [Spring Cloud Gateway\nPort: 8080\n- JWT Validation\n- Rate Limiting\n- Request Routing\n- CORS] as APIGateway
+}
+
+package "Microservices Layer" as Microservices {
+
+    package "Authentication Service" as AuthService {
+        [Auth Service\nPort: 8081\nSpring Boot + Security\n- User Registration/Login\n- JWT Token Management\n- Password Reset\n- Email OTP Verification\n- Account Management] as AuthSvc
+
+        database "Auth Database Tables" as AuthDB {
+            [users] as UsersTable
+            [user_roles] as UserRolesTable
+            [otp_verifications] as OTPTable
+            [password_reset_token] as ResetTokenTable
+            [user_profile_extensions] as ProfileExtTable
+        }
+    }
+
+    package "Social Service" as SocialService {
+        [Social Service\nPort: 8082\nSpring Boot + WebSocket\n- Posts & Content\n- Real-time Chat\n- File Upload (S3)\n- Video Calls (Agora)\n- Notifications\n- Social Graph] as SocialSvc
+
+        database "Social Database Tables" as SocialDB {
+            [posts] as PostsTable
+            [messages] as MessagesTable
+            [followers] as FollowersTable
+            [notifications] as NotificationsTable
+            [call_logs] as CallLogsTable
+            [comments, likes, shares, saves] as InteractionsTable
+            [blocked_users, close_friends] as RelationsTable
+        }
+    }
+}
+
+package "Data Layer" as DataLayer {
+    database "MySQL RDS\n(auth_db)" as MySQLDB {
+        frame "Shared Schema" as SharedSchema {
+            [21 Tables\n- Users & Auth\n- Content & Social\n- Messaging\n- System] as Tables
+        }
+    }
+
+    database "Redis ElastiCache" as RedisDB {
+        [Session Cache] as SessionCache
+        [Rate Limiting] as RateLimitCache
+        [Real-time Data] as RTDataCache
+    }
+}
+
+package "External Services" as External {
+    storage "AWS S3\nMedia Storage" as S3Bucket {
+        [User Uploads\n- Profile Pictures\n- Post Images\n- Chat Media] as S3Content
+    }
+
+    cloud "Agora RTC\nVideo Calling" as AgoraRTC {
+        [WebRTC Infrastructure\n- Video Calls\n- Audio Calls\n- Signaling] as VideoService
+    }
+
+    cloud "SMTP Service\nEmail Notifications" as EmailService {
+        [Gmail SMTP\n- OTP Emails\n- Password Reset\n- Notifications] as EmailSvc
+    }
+}
+
+package "Infrastructure Layer" as Infra {
+    rectangle "Load Balancer\nAWS ALB" as load-balancer
+    rectangle "API Gateway EC2\nt3.micro" as api-gateway-ec2
+    rectangle "Auth Service EC2\nt3.small" as auth-service-ec2
+    rectangle "Social Service EC2\nt3.medium" as social-service-ec2
+    rectangle "MySQL RDS\ndb.t3.micro" as mysql-rds
+    rectangle "Redis Cache\ncache.t3.micro" as redis-cache
+    rectangle "S3 Bucket\nStandard" as s3-storage
+}
+
+package "Infrastructure Layer" as Infra {
+    rectangle "Load Balancer\nAWS ALB" as load-balancer
+    rectangle "API Gateway EC2\nt3.micro" as api-gateway-ec2
+    rectangle "Auth Service EC2\nt3.small" as auth-service-ec2
+    rectangle "Social Service EC2\nt3.medium" as social-service-ec2
+    rectangle "MySQL RDS\ndb.t3.micro" as mysql-rds
+    rectangle "Redis Cache\ncache.t3.micro" as redis-cache
+    rectangle "S3 Bucket\nStandard" as s3-storage
+}
+
+' Connections and Data Flow
+FrontendApp --> APIGateway : HTTPS/REST/WebSocket
+APIGateway --> AuthSvc : /api/auth/**
+APIGateway --> SocialSvc : /api/social/**, /ws/**, /api/calls/**
+
+AuthSvc --> MySQLDB : JPA/Hibernate
+SocialSvc --> MySQLDB : JPA/Hibernate
+
+AuthSvc --> RedisDB : Session Cache
+SocialSvc --> RedisDB : Real-time Data
+
+SocialSvc --> S3Bucket : File Upload/Download
+SocialSvc --> AgoraRTC : Video Call Signaling
+AuthSvc --> EmailService : OTP/Reset Emails
+
+' Infrastructure connections
+APIGateway --> api-gateway-ec2
+AuthSvc --> auth-service-ec2
+SocialSvc --> social-service-ec2
+MySQLDB --> mysql-rds
+RedisDB --> redis-cache
+S3Bucket --> s3-storage
+
+load-balancer --> api-gateway-ec2 : Routes traffic
+load-balancer --> auth-service-ec2 : Health checks
+load-balancer --> social-service-ec2 : Health checks
+
+' Database relationships
+AuthSvc --> AuthDB
+SocialSvc --> SocialDB
+
+' Security and monitoring
+APIGateway --> RedisDB : Rate Limiting
+AuthSvc --> AuthSvc : JWT Validation
+
+note right of APIGateway : JWT Authentication\nRate Limiting\nRequest Routing\nCORS Handling
+
+note right of AuthSvc : User Management\nToken Generation\nEmail Verification\nAccount Security
+
+note right of SocialSvc : Content Management\nReal-time Chat\nMedia Processing\nSocial Features\nVideo Calling
+
+note bottom of MySQLDB : Shared Database\n21 Tables\nInnoDB Engine\nUTF8MB4 Charset
+
+note bottom of RedisDB : Caching Layer\nSession Storage\nReal-time Data\nRate Limiting
+
+@enduml

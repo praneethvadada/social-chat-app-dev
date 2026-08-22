@@ -1,0 +1,18 @@
+# Copy this file to application-local.properties (same directory) and fill
+# in real values. application-local.properties is gitignored (see the repo
+# root .gitignore's "application-*.properties" rule) — never commit it.
+# Spring Boot loads it automatically (see spring.config.import in
+# application.properties); anything set here overrides application.properties.
+
+# Twilio credentials — only needed if you set sms.provider=twilio below
+# (default is "noop", which just logs the OTP server-side, no SMS sent).
+sms.provider=twilio
+sms.twilio.account-sid=
+sms.twilio.auth-token=
+sms.twilio.from-number=
+
+# Gmail SMTP credentials — a Gmail address and an App Password (not your
+# regular account password; generate one at myaccount.google.com/apppasswords).
+# Needed for welcome/password-reset/OTP emails to actually send.
+spring.mail.username=
+spring.mail.password=

@@ -1,0 +1,15 @@
+[Unit]
+Description=Social Service
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/opt/social-service
+EnvironmentFile=/opt/social-service/env.txt
+ExecStart=/usr/bin/java -Xms512m -Xmx1024m -jar /opt/social-service/social-service.jar
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

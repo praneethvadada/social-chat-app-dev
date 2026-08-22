@@ -1,0 +1,12 @@
+SPRING_DATASOURCE_URL=jdbc:mysql://social-media-db.ca30yaou8j00.us-east-1.rds.amazonaws.com:3306/auth_db?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+SPRING_DATASOURCE_USERNAME=admin
+SPRING_DATASOURCE_PASSWORD=SecurePass123!
+SPRING_DATA_REDIS_HOST=social-media-redis.0k0afe.0001.use1.cache.amazonaws.com
+SPRING_DATA_REDIS_PORT=6379
+JWT_SECRET=5367566B59703373367639792F423F4528482B4D6251655468576D5A71347437
+PORT=8082
+SPRING_PROFILES_ACTIVE=prod
+AWS_S3_BUCKET=social-media-gidut-54513
+AWS_REGION=us-east-1
+AGORA_APP_ID=b7a780435e494cdf8c4d6e4bc59be7ab
+AGORA_APP_CERT=7c3359b7e6214ec6a5bcca098d47ee77

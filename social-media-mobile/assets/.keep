@@ -1,0 +1,1 @@
+This file prevents the `assets/` folder from being empty. Do not remove — used to ensure AssetManifest is generated.

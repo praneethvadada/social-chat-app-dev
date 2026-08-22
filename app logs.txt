@@ -1,0 +1,7 @@
+2026-01-29T13:40:35.480+05:30  INFO 12008 --- [social-service] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-01-29T13:40:35.497+05:30  WARN 12008 --- [social-service] [           main] c.s.social.config.FirebaseConfig         : [Firebase] ΓÜá∩╕Å Failed to load from ENV path: C:\firebase\serviceAccountKey.json  (The system cannot find the path specified). Trying resources...
+2026-01-29T13:40:35.557+05:30  INFO 12008 --- [social-service] [           main] c.s.social.config.FirebaseConfig         : [Firebase] ≡ƒôé Loaded serviceAccountKey.json from resources
+2026-01-29T13:40:35.579+05:30  INFO 12008 --- [social-service] [           main] c.s.social.config.FirebaseConfig         : [Firebase] Γ£à Firebase Admin SDK initialized successfully
+2026-01-29T13:40:35.964+05:30  INFO 12008 --- [social-service] [           main] o.s.d.j.r.query.QueryEnhancerFactory     : Hibernate is in classpath; If applicable, HQL parser will be used.
+2026-01-29T13:40:38.531+05:30  WARN 12008 --- [social-service] [           main] JpaBaseConfiguration$JpaWebConfiguration : spring.jpa.open-in-view is enabled by default. Therefore, database queries may be performed during view rendering. Explicitly configure spring.jpa.open-in-view to disable this warning
+2026-01-29T13:40:38.573+05:30  WARN 12008 --- [social-service] [           main] .s.s.UserDetailsServiceAutoConfiguration :

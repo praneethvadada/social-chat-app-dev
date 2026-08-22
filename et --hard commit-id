@@ -1,0 +1,61 @@
+[33mb7d47e2[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mdev[m[33m, [m[1;31morigin/dev[m[33m)[m Solving audio calls audio issue...
+[33m874f149[m Solving audio calls audio issue
+[33m5fb2bc3[m Solving audio calls audio issue
+[33mb7a027c[m Solving audio calls audio issue
+[33ma6db39f[m Solved audio and video calls flagging issue
+[33mda16118[m Solved routing issues on logged out
+[33m9bff414[m Solved routing issues on logged out
+[33mdc0d29b[m Solved routing issues
+[33m1d74c29[m Solving call ignore bug...
+[33me10b51a[m Solving call ignore bug..
+[33m9975c0c[m Solving call ignore bug
+[33m23d4c54[m Adding call end button to calls
+[33m02530aa[m Adding call end button to calls
+[33m19cb5ee[m Incoming call received
+[33mdfc95bc[m test api
+[33m98eea28[m added test logs
+[33m9859837[m added test ip
+[33mf3e5437[m Removed double instances on calls
+[33m6231d89[m fixed statemanagemnet routing on calls
+[33m2ebd9e2[m fixed statemanagemnet routing on calls
+[33mc9af247[m fixed statemanagemnet routing on calls
+[33m7613bed[m fixed statemanagemnet routing on calls
+[33m06230e3[m fixed statemanagemnet routing on calls
+[33mb264d65[m fixed statemanagemnet routing issues on app
+[33ma179427[m fixed statemanagemnet routing issues on app
+[33m097bc62[m call accepted more test logs added
+[33mf855e6c[m call accepted test logs added
+[33mc95398b[m[33m ([m[1;31morigin/test[m[33m, [m[1;32mtest[m[33m)[m call accepted test
+[33m2755386[m api testing ip changes
+[33me680a8b[m Calls debug
+[33mc70ca9b[m added calls debug lines
+[33m267882a[m Fixed routin issues
+[33m151743a[m Tested calls
+[33m96fc98d[m tested calls
+[33m9869c2c[m implemented typing status
+[33m64710bf[m real time chatting
+[33m589f8c2[m solving chatbugs
+[33m8534b82[m Add .gitignore rules for build artifacts and remove large tar.gz file
+[33m9d8d379[m cleared aws bugs
+[33m32fed4d[m Fix: exclude Flutter build artifacts from git
+[33md51a998[m Add WebSocket route to API Gateway for real-time chat
+[33mce4d794[m Add WebSocket route to API Gateway for real-time chat
+[33mabf05c2[m Resolved schema validation errors on signup
+[33m23f8b06[m added documentaions
+[33m08978b7[m added documentaions
+[33m222e1e0[m Add read receipts implementation and related files
+[33mc8e0897[m B pulled from dev branch
+[33mefebbcc[m Pulled dev deployment changes
+[33m4e254d1[m deployed backend successfully
+[33m992a934[m Implemented settings and notifications
+[33m0f22d6e[m Finalize changes before merging to main
+[33m4340970[m Added audio and Video calls
+[33md43f06b[m chat bugs resolved
+[33m097d260[m implemneted notifications
+[33mf5e1999[m solved profile bugs
+[33m1d74221[m itegration completed
+[33m5cb1435[m integrated with Login and Signup
+[33mba5f59e[m added backend folder
+[33m2220060[m added readme on backend folder
+[33m2132450[m added frontend and backend folders
+[33m51a0090[m[33m ([m[1;31morigin/main[m[33m)[m first commit

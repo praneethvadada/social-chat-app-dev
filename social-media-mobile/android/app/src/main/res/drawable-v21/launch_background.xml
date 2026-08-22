@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Native splash screen for Android 5.0+ - seamless transition -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Solid primary color background matching Flutter splash -->
+    <item android:drawable="@color/primary_color" />
+</layer-list>

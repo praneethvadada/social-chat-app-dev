@@ -1,0 +1,15 @@
+[Unit]
+Description=API Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/opt/api-gateway
+EnvironmentFile=/opt/api-gateway/env.txt
+ExecStart=/usr/bin/java -Xms512m -Xmx1024m -DAUTH_SERVICE_URL=${AUTH_SERVICE_URL} -DSOCIAL_SERVICE_URL=${SOCIAL_SERVICE_URL} -DJWT_SECRET=${JWT_SECRET} -DPORT=${PORT} -jar /opt/api-gateway/api-gateway.jar
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

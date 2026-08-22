@@ -1,0 +1,15 @@
+[Unit]
+Description=Auth Service
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/opt/auth-service
+EnvironmentFile=/opt/auth-service/env.txt
+ExecStart=/usr/bin/java -Xms512m -Xmx1024m -jar /opt/auth-service/auth-service.jar
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,75 @@
+    final message = _extractErrorMessage(response, 'Failed to load user posts (code ${response.statusCode})');
+    throw Exception(message);
+  }
+
+  static Future<Map<String, dynamic>> getUserProfile(int userId) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    print('\n========== FETCHING USER PROFILE ==========');
+    print('userId: $userId');
+    
+    final response = await http.get(
+      Uri.parse('$baseUrl/social/profiles/$userId'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    print('Response Status: ${response.statusCode}');
+    print('Response Body: ${response.body}');
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      print('Profile fetched: ${data['fullName']}');
+      return data;
+    } else {
+      final message = _extractErrorMessage(response, 'Failed to load user profile');
+      throw Exception(message);
+    }
+  }
+
+  static Future<void> followUser(int userId) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/social/followers/follow/$userId'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final message = _extractErrorMessage(response, 'Failed to follow user');
+      throw Exception(message);
+    }
+  }
+
+  static Future<void> unfollowUser(int userId) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.delete(
+      Uri.parse('$baseUrl/social/followers/unfollow/$userId'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode != 200 && response.statusCode != 204) {
+      final message = _extractErrorMessage(response, 'Failed to unfollow user');
+      throw Exception(message);
+    }
+  }
+
+  static Future<bool> checkFollowStatus(int userId) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.get(
+      Uri.parse('$baseUrl/social/followers/check/$userId'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return data['isFollowing'] == true || data == true;
+    }
+    return false;
+  }
+}

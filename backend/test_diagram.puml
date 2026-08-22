@@ -1,0 +1,13 @@
+@startuml Test Diagram
+title PlantUML Java Configuration Test
+
+package "Test Package" {
+    class TestClass {
+        +testMethod()
+    }
+}
+
+note right : If you can see this diagram,\nPlantUML is working correctly\nwith JDK 17!
+
+TestClass --> TestClass : self reference
+@enduml

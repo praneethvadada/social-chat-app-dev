@@ -1,0 +1,54 @@
+# Elastic Beanstalk Configuration
+# Place this file in each service directory (.ebextensions/01-environment.config)
+
+option_settings:
+  # Java Platform Options
+  aws:elasticbeanstalk:container:java:
+    JVMOptions: '-Xmx512m -Xms256m'
+  
+  # Environment Properties
+  aws:elasticbeanstalk:application:environment:
+    SERVER_PORT: '5000'
+    SPRING_PROFILES_ACTIVE: 'prod'
+  
+  # Load Balancer Health Check
+  aws:elasticbeanstalk:environment:process:default:
+    HealthCheckPath: '/actuator/health'
+    HealthCheckInterval: '30'
+    HealthCheckTimeout: '5'
+    UnhealthyThresholdCount: '3'
+    HealthyThresholdCount: '3'
+  
+  # Auto Scaling
+  aws:autoscaling:asg:
+    MinSize: '1'
+    MaxSize: '4'
+  
+  # Instance Type
+  aws:ec2:instances:
+    InstanceTypes: 't3.small'
+  
+  # CloudWatch Logs
+  aws:elasticbeanstalk:cloudwatch:logs:
+    StreamLogs: 'true'
+    DeleteOnTerminate: 'false'
+    RetentionInDays: '7'
+
+# Files to include in deployment
+files:
+  "/etc/systemd/system/spring-boot.service":
+    mode: "000644"
+    owner: root
+    group: root
+    content: |
+      [Unit]
+      Description=Spring Boot Application
+      After=syslog.target
+
+      [Service]
+      User=webapp
+      ExecStart=/usr/bin/java -jar /var/app/current/application.jar
+      SuccessExitStatus=143
+
+      [Install]
+      WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App primary color - matches Flutter AppColors.primary -->
+    <color name="primary_color">#2DBE4F</color>
+</resources>

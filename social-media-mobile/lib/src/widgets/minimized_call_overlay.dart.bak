@@ -1,0 +1,431 @@
+import 'package:flutter/material.dart';
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import '../models/user_profile.dart';
+import '../services/user_profile_cache.dart';
+import '../services/call_signaling_service.dart';
+import '../state/call_state_manager.dart';
+import '../navigation/root_navigator_key.dart';
+import '../screens/call_screen.dart';
+
+/// Builds the minimized call overlay widgets to be added to a Stack
+List<Widget> buildMinimizedCallOverlay({
+  required BuildContext context,
+  required Map<String, dynamic> callPayload,
+  required bool isVideo,
+}) {
+  final callState = CallStateManager().currentState;
+  
+  // Get user profile synchronously from cache
+  final toUserId = callPayload['toUserId'] as int? ?? 
+                   callPayload['fromUserId'] as int? ?? 
+                   0;
+  final cachedProfile = UserProfileCache().getCachedOnly(toUserId);
+  final userName = cachedProfile?.fullName ?? 'User';
+  
+  String stateLabel = '';
+  switch (callState) {
+    case CallState.outgoingCalling:
+      stateLabel = 'Calling...';
+      break;
+    case CallState.incomingRinging:
+      stateLabel = 'Ringing...';
+      break;
+    case CallState.inCall:
+      stateLabel = 'In call';
+      break;
+    default:
+      stateLabel = 'Call';
+  }
+  
+  void maximizeCall() {
+    CallStateManager().setMinimized(false);
+    final remoteUserId = callPayload['toUserId'] as int? ?? 
+                         callPayload['fromUserId'] as int? ?? 
+                         0;
+    final channelName = callPayload['channelName'] as String? ?? '';
+    
+    Navigator.of(rootNavigatorKey.currentContext!).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => CallScreen(
+          otherUserId: remoteUserId,
+          channelName: channelName,
+          isVideo: isVideo,
+        ),
+      ),
+    );
+  }
+  
+  Future<void> endCall() async {
+    print('[MinimizedCallOverlay] 🔴 Ending call from minimized overlay');
+    
+    try {
+      final fromUserId = callPayload['fromUserId'] as int? ?? 0;
+      final toUserId = callPayload['toUserId'] as int? ?? 0;
+      final channelName = callPayload['channelName'] as String? ?? '';
+
+      CallSignalingService().sendCallEnd(
+        fromUserId: fromUserId,
+        toUserId: toUserId,
+        channelName: channelName,
+      );
+    } catch (e) {
+      print('[MinimizedCallOverlay] ⚠️ Failed to send end signal: $e');
+    }
+
+    CallStateManager().reset();
+  }
+  
+  return [
+    // Top green bar
+    Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: Material(
+        color: Colors.green[700],
+        child: SafeArea(
+          bottom: false,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                // Tap to expand
+                Expanded(
+                  child: GestureDetector(
+                    onTap: maximizeCall,
+                    child: Row(
+                      children: [
+                        Icon(
+                          isVideo ? Icons.videocam : Icons.phone,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                userName,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                stateLabel,
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Maximize button
+                GestureDetector(
+                  onTap: maximizeCall,
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white24,
+                    ),
+                    child: const Icon(
+                      Icons.call,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // End Call Button
+                GestureDetector(
+                  onTap: endCall,
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.red,
+                    ),
+                    child: const Icon(
+                      Icons.call_end,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  ];
+}
+
+  UserProfile? _remoteUserProfile;
+  Offset _videoPosition = const Offset(20, 100); // For draggable video window
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRemoteUserProfile();
+  }
+
+  Future<void> _loadRemoteUserProfile() async {
+    final remoteUserId = widget.callPayload['toUserId'] as int? ?? 
+                         widget.callPayload['fromUserId'] as int? ?? 
+                         0;
+    
+    if (remoteUserId <= 0) return;
+
+    try {
+      // Try cache first
+      final cachedProfile = UserProfileCache().getCachedOnly(remoteUserId);
+      if (cachedProfile != null && mounted) {
+        setState(() {
+          _remoteUserProfile = cachedProfile;
+        });
+      }
+
+      // Fetch fresh
+      final profile = await UserProfileCache().getProfile(remoteUserId);
+      if (profile != null && mounted) {
+        setState(() {
+          _remoteUserProfile = profile;
+        });
+      }
+    } catch (e) {
+      print('[MinimizedCallOverlay] ❌ Failed to load profile: $e');
+    }
+  }
+
+  void _maximizeCall() {
+    print('[MinimizedCallOverlay] 📱 Maximizing call');
+    
+    // Hide minimized overlay
+    CallStateManager().setMinimized(false);
+    
+    // Show full call screen
+    final remoteUserId = widget.callPayload['toUserId'] as int? ?? 
+                         widget.callPayload['fromUserId'] as int? ?? 
+                         0;
+    final channelName = widget.callPayload['channelName'] as String? ?? '';
+    
+    Navigator.of(rootNavigatorKey.currentContext!).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => CallScreen(
+          otherUserId: remoteUserId,
+          channelName: channelName,
+          isVideo: widget.isVideo,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _endCall() async {
+    print('[MinimizedCallOverlay] 🔴 Ending call from minimized overlay');
+    
+    try {
+      final fromUserId = widget.callPayload['fromUserId'] as int? ?? 0;
+      final toUserId = widget.callPayload['toUserId'] as int? ?? 0;
+      final channelName = widget.callPayload['channelName'] as String? ?? '';
+
+      // Send call end signal
+      CallSignalingService().sendCallEnd(
+        fromUserId: fromUserId,
+        toUserId: toUserId,
+        channelName: channelName,
+      );
+    } catch (e) {
+      print('[MinimizedCallOverlay] ⚠️ Failed to send end signal: $e');
+    }
+
+    // Reset call state
+    CallStateManager().reset();
+  }
+
+  // Build list of overlay widgets (to be used in parent Stack)
+  List<Widget> buildOverlayWidgets(BuildContext context) {
+    final userName = _remoteUserProfile?.fullName ?? 
+                     'User';
+    
+    final callState = CallStateManager().currentState;
+    String stateLabel = '';
+    switch (callState) {
+      case CallState.outgoingCalling:
+        stateLabel = 'Calling...';
+        break;
+      case CallState.incomingRinging:
+        stateLabel = 'Ringing...';
+        break;
+      case CallState.inCall:
+        stateLabel = 'In call';
+        break;
+      default:
+        stateLabel = 'Call';
+    }
+
+    return [
+      // Top green bar
+      Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: Material(
+            color: Colors.green[700],
+            child: SafeArea(
+              bottom: false,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  children: [
+                    // Tap to expand
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: _maximizeCall,
+                        child: Row(
+                          children: [
+                            Icon(
+                              widget.isVideo ? Icons.videocam : Icons.phone,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    userName,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  Text(
+                                    stateLabel,
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Maximize button
+                    GestureDetector(
+                      onTap: _maximizeCall,
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white24,
+                        ),
+                        child: const Icon(
+                          Icons.call,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // End Call Button
+                    GestureDetector(
+                      onTap: _endCall,
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.red,
+                        ),
+                        child: const Icon(
+                          Icons.call_end,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        // Floating video preview for video calls (only when in call)
+        if (widget.isVideo && callState == CallState.inCall && CallStateManager().agoraService?.engine != null)
+          Positioned(
+            left: _videoPosition.dx,
+            top: _videoPosition.dy,
+            child: GestureDetector(
+              onPanUpdate: (details) {
+                setState(() {
+                  _videoPosition = Offset(
+                    (_videoPosition.dx + details.delta.dx).clamp(0.0, MediaQuery.of(context).size.width - 120),
+                    (_videoPosition.dy + details.delta.dy).clamp(60.0, MediaQuery.of(context).size.height - 160),
+                  );
+                });
+              },
+              onTap: _maximizeCall,
+              child: Container(
+                width: 120,
+                height: 160,
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.5),
+                      blurRadius: 10,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: AgoraVideoView(
+                    controller: VideoViewController(
+                      rtcEngine: CallStateManager().agoraService!.engine!,
+                      canvas: const VideoCanvas(uid: 0),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Return empty container - actual widgets are added via buildOverlayWidgets()
+    return const SizedBox.shrink();
+  }
+}
