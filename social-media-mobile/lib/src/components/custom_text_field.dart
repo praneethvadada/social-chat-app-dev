@@ -26,7 +26,7 @@ class CustomTextField extends StatelessWidget {
         obscureText: obscureText,
         decoration: InputDecoration(
           hintText: hintText,
-          hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AppColors.muted),
+          hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AppColors.mutedSolid),
           suffixIcon: suffix,
         ),
       ),

@@ -9,18 +9,26 @@ import '../../theme/colors.dart';
 import '../../services/firebase_messaging_service.dart';
 
 class OtpScreen extends ConsumerStatefulWidget {
-  final String email;
+  /// Provide exactly one of [email] or [phoneNumber] — matches whichever
+  /// identifier SignupScreen sent the OTP to. Email OTPs are 4 digits,
+  /// phone OTPs are 6 (see PhoneOtpService.otpLength on the backend) — the
+  /// box row and every length check below derive from this, not a constant.
+  final String? email;
+  final String? phoneNumber;
   final String username;
   final String fullName;
   final String password;
 
   const OtpScreen({
     super.key,
-    required this.email,
+    this.email,
+    this.phoneNumber,
     required this.username,
     required this.fullName,
     required this.password,
-  });
+  }) : assert((email != null) != (phoneNumber != null), 'Provide exactly one of email or phoneNumber');
+
+  bool get isPhone => phoneNumber != null;
 
   @override
   ConsumerState<OtpScreen> createState() => _OtpScreenState();
@@ -38,11 +46,15 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
   late final Animation<Offset> _slide;
   late final Animation<double> _fade;
 
+  int get _otpLength => widget.isPhone ? 6 : 4;
+
+  static const String _phoneSignupPurpose = 'PHONE_SIGNUP';
+
   @override
   void initState() {
     super.initState();
-    _otpControllers = List.generate(4, (_) => TextEditingController());
-    _focusNodes = List.generate(4, (_) => FocusNode());
+    _otpControllers = List.generate(_otpLength, (_) => TextEditingController());
+    _focusNodes = List.generate(_otpLength, (_) => FocusNode());
 
     _animController = AnimationController(
       vsync: this,
@@ -72,7 +84,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
   }
 
   void _onOtpInputChange(String value, int index) {
-    if (value.length == 1 && index < 3) {
+    if (value.length == 1 && index < _otpLength - 1) {
       // Move to next field
       _focusNodes[index + 1].requestFocus();
     } else if (value.isEmpty && index > 0) {
@@ -89,9 +101,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
     final otp = _getOtpCode();
     final snack = ScaffoldMessenger.of(context);
 
-    if (otp.length != 4) {
+    if (otp.length != _otpLength) {
       snack.showSnackBar(
-        const SnackBar(content: Text('Please enter all 4 digits')),
+        SnackBar(content: Text('Please enter all $_otpLength digits')),
       );
       return;
     }
@@ -100,19 +112,26 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
 
     try {
       // Call OTP verification endpoint
-      final response = await ApiService.verifyOtp(
-        email: widget.email,
-        otp: otp,
-      );
+      final response = widget.isPhone
+          ? await ApiService.verifyPhoneOtp(
+              phoneNumber: widget.phoneNumber!,
+              otp: otp,
+              purpose: _phoneSignupPurpose,
+            )
+          : await ApiService.verifyOtp(
+              email: widget.email!,
+              otp: otp,
+            );
 
       if (response['success'] == true) {
         // OTP verified, now register the user
         try {
           await ApiService.register(
-            widget.username,
-            widget.email,
-            widget.password,
-            widget.fullName,
+            username: widget.username,
+            password: widget.password,
+            fullName: widget.fullName,
+            email: widget.email,
+            phoneNumber: widget.phoneNumber,
           );
 
           snack.showSnackBar(
@@ -171,11 +190,13 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
     setState(() => _isResendingOtp = true);
 
     try {
-      final response = await ApiService.resendOtp(email: widget.email);
+      final response = widget.isPhone
+          ? await ApiService.resendPhoneOtp(phoneNumber: widget.phoneNumber!, purpose: _phoneSignupPurpose)
+          : await ApiService.resendOtp(email: widget.email!);
 
       if (response['success'] == true) {
         snack.showSnackBar(
-          const SnackBar(content: Text('OTP sent to your email')),
+          SnackBar(content: Text(widget.isPhone ? 'OTP sent to your phone' : 'OTP sent to your email')),
         );
 
         // Start countdown
@@ -207,6 +228,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     final contentWidth = width > 520 ? 520.0 : width * 0.94;
+    final destination = widget.isPhone ? widget.phoneNumber! : widget.email!;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -231,7 +253,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
                         const AppLogo(size: 90),
                         const SizedBox(height: 28),
                         Text(
-                          'Verify Your Email',
+                          widget.isPhone ? 'Verify Your Phone Number' : 'Verify Your Email',
                           textAlign: TextAlign.center,
                           style: Theme.of(context)
                               .textTheme
@@ -243,7 +265,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'We\'ve sent a 4-digit OTP to ${widget.email}',
+                          'We\'ve sent a $_otpLength-digit OTP to $destination',
                           textAlign: TextAlign.center,
                           style: Theme.of(context)
                               .textTheme
@@ -258,7 +280,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: List.generate(
-                            4,
+                            _otpLength,
                             (index) => Padding(
                               padding:
                                   const EdgeInsets.symmetric(horizontal: 8.0),

@@ -169,7 +169,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> with SingleTickerProv
                         const SizedBox(height: 8),
                         Text('Connect with friends and share moments', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AppColors.muted)),
                         const SizedBox(height: 22),
-                        CustomTextField(controller: _userCtrl, hintText: 'Email or Username', keyboardType: TextInputType.text),
+                        CustomTextField(controller: _userCtrl, hintText: 'Email, Phone, or Username', keyboardType: TextInputType.text),
                         const SizedBox(height: 14),
                         CustomTextField(
                           controller: _passCtrl,

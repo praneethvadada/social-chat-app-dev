@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../components/app_logo.dart';
 import '../../components/custom_text_field.dart';
+import '../../components/segment_tabs.dart';
 import '../../components/two_step_card.dart';
 import '../../theme/colors.dart';
 import '../../services/api_service.dart';
@@ -19,9 +20,14 @@ class _SignupScreenState extends ConsumerState<SignupScreen> with SingleTickerPr
   final TextEditingController _fullNameCtrl = TextEditingController();
   final TextEditingController _usernameCtrl = TextEditingController();
   final TextEditingController _emailCtrl = TextEditingController();
+  final TextEditingController _phoneCtrl = TextEditingController();
   final TextEditingController _passwordCtrl = TextEditingController();
   bool _obscure = true;
   bool _isLoading = false;
+
+  /// 0 = sign up with Email, 1 = sign up with Phone — matches the backend's
+  /// "exactly one of email or phoneNumber" signup requirement.
+  int _method = 0;
 
   late final AnimationController _animController;
   late final Animation<Offset> _slide;
@@ -50,6 +56,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> with SingleTickerPr
     _fullNameCtrl.dispose();
     _usernameCtrl.dispose();
     _emailCtrl.dispose();
+    _phoneCtrl.dispose();
     _passwordCtrl.dispose();
     _animController.dispose();
     super.dispose();
@@ -59,10 +66,12 @@ class _SignupScreenState extends ConsumerState<SignupScreen> with SingleTickerPr
     final full = _fullNameCtrl.text.trim();
     final user = _usernameCtrl.text.trim();
     final email = _emailCtrl.text.trim();
+    final phone = _phoneCtrl.text.trim();
     final pass = _passwordCtrl.text;
     final snack = ScaffoldMessenger.of(context);
-    
-    if (full.isEmpty || user.isEmpty || email.isEmpty || pass.isEmpty) {
+    final usingPhone = _method == 1;
+
+    if (full.isEmpty || user.isEmpty || pass.isEmpty || (usingPhone ? phone.isEmpty : email.isEmpty)) {
       snack.showSnackBar(const SnackBar(content: Text('Please fill all fields')));
       return;
     }
@@ -70,40 +79,48 @@ class _SignupScreenState extends ConsumerState<SignupScreen> with SingleTickerPr
       snack.showSnackBar(const SnackBar(content: Text('Password must be at least 6 characters')));
       return;
     }
-    
+
     setState(() => _isLoading = true);
-    
+
     try {
-      // Check if email and username are available BEFORE sending OTP
-      final checkResponse = await ApiService.checkAvailability(email: email, username: user);
-      
-      if (checkResponse['emailExists'] == true) {
+      // Check username (and email, for the email path) availability BEFORE
+      // sending an OTP — phone uniqueness is checked later, by the phone
+      // OTP/register endpoints themselves (no separate availability check
+      // exists for phone on the backend).
+      final checkResponse = await ApiService.checkAvailability(
+        email: usingPhone ? null : email,
+        username: user,
+      );
+
+      if (!usingPhone && checkResponse['emailExists'] == true) {
         snack.showSnackBar(const SnackBar(content: Text('Email already exists')));
         setState(() => _isLoading = false);
         return;
       }
-      
+
       if (checkResponse['usernameExists'] == true) {
         snack.showSnackBar(const SnackBar(content: Text('Username already exists')));
         setState(() => _isLoading = false);
         return;
       }
-      
-      // Send OTP to email after validation
-      final otpResponse = await ApiService.sendOtp(email: email);
-      
+
+      final otpResponse = usingPhone
+          ? await ApiService.sendPhoneOtp(phoneNumber: phone, purpose: 'PHONE_SIGNUP')
+          : await ApiService.sendOtp(email: email);
+
       if (otpResponse['success'] == true) {
         snack.showSnackBar(
-          const SnackBar(content: Text('OTP sent to your email')),
+          SnackBar(content: Text(usingPhone ? 'OTP sent to your phone' : 'OTP sent to your email')),
         );
-        
+
         // Navigate to OTP verification screen
         // Pass user data without creating account yet
         if (mounted) {
           Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => OtpScreen(
-                email: email,
+                email: usingPhone ? null : email,
+                phoneNumber: usingPhone ? phone : null,
                 username: user,
                 fullName: full,
                 password: pass,
@@ -172,8 +189,21 @@ class _SignupScreenState extends ConsumerState<SignupScreen> with SingleTickerPr
                           CustomTextField(controller: _fullNameCtrl, hintText: 'Full Name', keyboardType: TextInputType.name),
                           const SizedBox(height: 12),
                           CustomTextField(controller: _usernameCtrl, hintText: 'Username', keyboardType: TextInputType.text),
+                          const SizedBox(height: 16),
+                          SegmentTabs(
+                            labels: const ['Email', 'Phone'],
+                            currentIndex: _method,
+                            onChanged: (i) => setState(() => _method = i),
+                          ),
                           const SizedBox(height: 12),
-                          CustomTextField(controller: _emailCtrl, hintText: 'Email', keyboardType: TextInputType.emailAddress),
+                          if (_method == 0)
+                            CustomTextField(controller: _emailCtrl, hintText: 'Email', keyboardType: TextInputType.emailAddress)
+                          else
+                            CustomTextField(
+                              controller: _phoneCtrl,
+                              hintText: 'Phone Number (e.g. +919876543210)',
+                              keyboardType: TextInputType.phone,
+                            ),
                           const SizedBox(height: 12),
                           CustomTextField(
                             controller: _passwordCtrl,

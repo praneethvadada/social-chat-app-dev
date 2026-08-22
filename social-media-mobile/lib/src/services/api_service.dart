@@ -670,15 +670,20 @@ class ApiService {
   static Future<Map<String, dynamic>> login(String emailOrUsername, String password) async {
     print('\n========== MOBILE APP LOGIN ==========');
     print('Email/Username: $emailOrUsername');
-    
-    // Determine if input is email or username
-    final isEmail = emailOrUsername.contains('@');
-    
+
+    // Anything email- or phone-shaped goes through the backend's unified
+    // `identifier` field (resolves email vs E.164 phone, enforces the
+    // verified-identifier check either way); anything else is treated as a
+    // username exactly as before — zero change to existing username login.
+    final trimmed = emailOrUsername.trim();
+    final isEmail = trimmed.contains('@');
+    final isPhoneLike = trimmed.startsWith('+');
+
     final response = await http.post(
       Uri.parse('$baseUrl/auth/login'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode({
-        if (isEmail) 'email': emailOrUsername else 'username': emailOrUsername,
+        if (isEmail || isPhoneLike) 'identifier': trimmed else 'username': trimmed,
         'password': password,
       }),
     );
@@ -721,13 +726,25 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> register(String username, String email, String password, String fullName) async {
+  /// Provide exactly one of [email] or [phoneNumber] — matches the backend's
+  /// XOR signup requirement. Whichever you pass must already be OTP-verified
+  /// (see sendOtp/verifyOtp for email, sendPhoneOtp/verifyPhoneOtp for phone)
+  /// or the backend rejects the request with VERIFICATION_REQUIRED.
+  static Future<Map<String, dynamic>> register({
+    required String username,
+    required String password,
+    required String fullName,
+    String? email,
+    String? phoneNumber,
+  }) async {
+    assert((email != null) != (phoneNumber != null), 'Provide exactly one of email or phoneNumber');
     final response = await http.post(
       Uri.parse('$baseUrl/auth/register'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode({
         'username': username,
-        'email': email,
+        if (email != null) 'email': email,
+        if (phoneNumber != null) 'phoneNumber': phoneNumber,
         'password': password,
         'fullName': fullName,
       }),
@@ -848,6 +865,90 @@ class ApiService {
       }
       final message = _extractErrorMessage(response, fallback);
       throw Exception(message);
+    }
+  }
+
+  /// Content-Type, plus Authorization if a session token exists. The phone
+  /// OTP endpoints below are path-shared between an unauthenticated purpose
+  /// (PHONE_SIGNUP, used during signup — no token exists yet) and an
+  /// authenticated one (PHONE_VERIFICATION, for linking a phone to an
+  /// already-logged-in account) — this lets one set of methods serve both
+  /// without the caller needing to build headers itself.
+  static Future<Map<String, String>> _authHeadersOptional() async {
+    final headers = {'Content-Type': 'application/json'};
+    final token = await getToken();
+    if (token != null) headers['Authorization'] = 'Bearer $token';
+    return headers;
+  }
+
+  /// Send an OTP to a phone number. purpose is 'PHONE_SIGNUP' (pre-registration,
+  /// no auth needed) or 'PHONE_VERIFICATION' (linking to an already-logged-in
+  /// account, requires a Bearer token — sent automatically if one exists,
+  /// see _authHeadersOptional above).
+  static Future<Map<String, dynamic>> sendPhoneOtp({required String phoneNumber, required String purpose}) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/phone/send-otp'),
+      headers: await _authHeadersOptional(),
+      body: json.encode({'phoneNumber': phoneNumber, 'purpose': purpose}),
+    );
+
+    if (response.statusCode == 200) {
+      return {'success': true, ...json.decode(response.body) as Map<String, dynamic>};
+    } else {
+      String fallback = 'Failed to send OTP';
+      if (response.statusCode == 400) {
+        fallback = 'Invalid phone number';
+      } else if (response.statusCode == 409) {
+        fallback = 'This phone number is already registered';
+      } else if (response.statusCode == 429) {
+        fallback = 'Too many OTP requests. Please try again later';
+      }
+      final message = _extractErrorMessage(response, fallback);
+      return {'success': false, 'message': message};
+    }
+  }
+
+  /// Verify a phone OTP code. See sendPhoneOtp for `purpose`.
+  static Future<Map<String, dynamic>> verifyPhoneOtp({
+    required String phoneNumber,
+    required String otp,
+    required String purpose,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/phone/verify-otp'),
+      headers: await _authHeadersOptional(),
+      body: json.encode({'phoneNumber': phoneNumber, 'otp': otp, 'purpose': purpose}),
+    );
+
+    if (response.statusCode == 200) {
+      return {'success': true, ...json.decode(response.body) as Map<String, dynamic>};
+    } else {
+      String fallback = 'OTP verification failed';
+      if (response.statusCode == 400) {
+        fallback = 'Invalid or expired OTP';
+      }
+      final message = _extractErrorMessage(response, fallback);
+      return {'success': false, 'message': message};
+    }
+  }
+
+  /// Resend a phone OTP. See sendPhoneOtp for `purpose`.
+  static Future<Map<String, dynamic>> resendPhoneOtp({required String phoneNumber, required String purpose}) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/phone/resend-otp'),
+      headers: await _authHeadersOptional(),
+      body: json.encode({'phoneNumber': phoneNumber, 'purpose': purpose}),
+    );
+
+    if (response.statusCode == 200) {
+      return {'success': true, ...json.decode(response.body) as Map<String, dynamic>};
+    } else {
+      String fallback = 'Failed to resend OTP';
+      if (response.statusCode == 429) {
+        fallback = 'Too many requests. Please try again later';
+      }
+      final message = _extractErrorMessage(response, fallback);
+      return {'success': false, 'message': message};
     }
   }
 

@@ -22,6 +22,29 @@ public class GatewayConfig {
     @Bean
     public RouteLocator customRouteLocator(RouteLocatorBuilder builder) {
         return builder.routes()
+            // Phone/email sub-controllers are mapped at "/auth/phone/**" and
+            // "/auth/email/**" on auth-service (matching SecurityConfig's permitAll
+            // patterns), unlike AuthController which is root-mapped ("/register",
+            // "/login", ...). So these need stripPrefix(1) (keep "/auth/..."),
+            // while the general route below needs stripPrefix(2) (drop "/auth"
+            // too). Must be declared BEFORE the general /api/auth/** route, same
+            // pattern as the chats-messages/chats-conversations routes below.
+            .route("auth-service-phone", r -> r
+                .path("/api/auth/phone/**")
+                .filters(f -> f
+                    .stripPrefix(1)
+                    .addRequestHeader("X-Gateway-Source", "api-gateway")
+                    .retry(config -> config.setRetries(3)))
+                .uri(authServiceUrl))
+
+            .route("auth-service-email-link", r -> r
+                .path("/api/auth/email/**")
+                .filters(f -> f
+                    .stripPrefix(1)
+                    .addRequestHeader("X-Gateway-Source", "api-gateway")
+                    .retry(config -> config.setRetries(3)))
+                .uri(authServiceUrl))
+
             .route("auth-service", r -> r
                 .path("/api/auth/**")
                 .filters(f -> f
