@@ -180,14 +180,14 @@ class _ForgotPasswordOtpScreenState extends State<ForgotPasswordOtpScreen>
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     final contentWidth = width > 520 ? 520.0 : width * 0.94;
+    final themed = ThemedColors.of(context);
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      // No explicit backgroundColor — see login_screen.dart for why.
       appBar: AppBar(
-        backgroundColor: AppColors.background,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: AppColors.text),
+          icon: Icon(Icons.arrow_back, color: themed.text),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
@@ -218,7 +218,7 @@ class _ForgotPasswordOtpScreenState extends State<ForgotPasswordOtpScreen>
                         'We sent a 4-digit code to',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: AppColors.muted,
+                          color: themed.muted,
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -252,14 +252,14 @@ class _ForgotPasswordOtpScreenState extends State<ForgotPasswordOtpScreen>
                               decoration: InputDecoration(
                                 counterText: '',
                                 filled: true,
-                                fillColor: AppColors.surface,
+                                fillColor: themed.surface,
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide(color: AppColors.border),
+                                  borderSide: BorderSide(color: themed.border),
                                 ),
                                 enabledBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide(color: AppColors.border),
+                                  borderSide: BorderSide(color: themed.border),
                                 ),
                                 focusedBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
@@ -334,7 +334,7 @@ class _ForgotPasswordOtpScreenState extends State<ForgotPasswordOtpScreen>
                             Text(
                               'Resend in ${_resendCountdown}s',
                               style: TextStyle(
-                                color: AppColors.muted,
+                                color: themed.muted,
                                 fontWeight: FontWeight.w600,
                               ),
                             )

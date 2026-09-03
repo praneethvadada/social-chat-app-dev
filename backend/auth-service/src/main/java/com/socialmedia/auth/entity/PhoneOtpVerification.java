@@ -28,7 +28,8 @@ public class PhoneOtpVerification {
 
     public enum Purpose {
         PHONE_SIGNUP,
-        PHONE_VERIFICATION
+        PHONE_VERIFICATION,
+        TWO_FACTOR_AUTH
     }
 
     @Id

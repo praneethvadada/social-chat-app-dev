@@ -65,6 +65,23 @@ public class ConversationController {
         return ResponseEntity.ok(conversationService.getMembers(conversationId));
     }
 
+    /**
+     * Phase 4: incremental sync - everything newer than {@code cursor} (a
+     * previously-returned message id). Works for both DIRECT and GROUP
+     * conversations since both carry a real conversationId (G0). Requires a
+     * cursor - a client syncing for the first time should call
+     * {@code /messages} (below) instead and seed its cursor from what it sees
+     * there.
+     */
+    @GetMapping("/{conversationId}/sync")
+    public ResponseEntity<com.socialmedia.chats.dto.ConversationSyncResponse> sync(
+            @PathVariable Long conversationId,
+            @RequestParam Long cursor,
+            @RequestParam(defaultValue = "200") int limit,
+            @RequestAttribute("userId") Long userId) {
+        return ResponseEntity.ok(messageService.syncConversation(conversationId, userId, cursor, limit));
+    }
+
     @GetMapping("/{conversationId}/messages")
     public ResponseEntity<Page<MessageResponse>> messages(
             @PathVariable Long conversationId,

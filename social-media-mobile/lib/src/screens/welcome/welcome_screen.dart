@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../components/app_logo.dart';
 import '../../components/primary_button.dart';
+import '../../responsive/desktop_content_wrapper.dart';
 import '../../theme/colors.dart';
 import '../../utils/animations.dart';
 
@@ -40,7 +41,10 @@ class _WelcomeScreenState extends State<WelcomeScreen>
         child: RepaintBoundary(
           child: FadeTransition(
             opacity: _fade,
-            child: Padding(
+            child: DesktopContentWrapper(
+              maxWidth: 440,
+              alignment: Alignment.center,
+              child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24.0),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -73,6 +77,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                   ),
                   const SizedBox(height: 28),
                 ],
+              ),
               ),
             ),
           ),

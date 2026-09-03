@@ -14,6 +14,7 @@ import '../groups/group_chat_screen.dart';
 import '../../database/local_chat_repository.dart';
 import '../calls/calls_screen.dart';
 import '../../components/squircle_avatar.dart';
+import '../../responsive/desktop_content_wrapper.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 // Call invite handling moved to global CallOverlayManager; imports removed
 
@@ -74,6 +75,46 @@ class _ChatsScreenState extends State<ChatsScreen>
 
   // G1: my group conversations (shown in a section above 1:1 chats)
   List<GroupSummary> _groups = [];
+
+  // Desktop split view (768px+, see build()): which conversation/group is
+  // showing in the right-hand pane. Below 768px these stay null and the
+  // screen behaves exactly as before (full-screen push navigation).
+  Conversation? _selectedConversation;
+  GroupSummary? _selectedGroup;
+
+  void _openConversation(BuildContext context, Conversation conv) {
+    if (MediaQuery.of(context).size.width >= 768) {
+      setState(() {
+        _selectedConversation = conv;
+        _selectedGroup = null;
+      });
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => ChatDetailScreen(conversation: conv)),
+    ).then((_) {
+      if (mounted) {
+        setState(() {
+          _conversationsFuture = _loadConversations();
+        });
+      }
+    });
+  }
+
+  Future<void> _openGroup(BuildContext context, GroupSummary g) async {
+    if (MediaQuery.of(context).size.width >= 768) {
+      setState(() {
+        _selectedGroup = g;
+        _selectedConversation = null;
+      });
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => GroupChatScreen(group: g)),
+    );
+    _loadGroups();
+  }
 
   Future<void> _loadGroups() async {
     try {
@@ -333,9 +374,14 @@ class _ChatsScreenState extends State<ChatsScreen>
         
         print('[ChatsScreen] ✅ Loaded ${sqliteConversations.length} conversations from SQLite');
         
-        // Convert SQLite conversations to Conversation objects
+        // Convert SQLite conversations to Conversation objects. Skip GROUP
+        // rows (otherUserId=0 sentinel, see ChatSyncService's own doc
+        // comment) — this screen is DIRECT-only (mirrors the online path's
+        // ApiService.getConversations(), which is also DIRECT-only); without
+        // this a group would show up as a bogus "chat with user 0" here.
         List<Conversation> offlineConversations = [];
         for (final conv in sqliteConversations) {
+          if (conv.conversationType == 'GROUP') continue;
           offlineConversations.add(
             Conversation(
               userId: conv.otherUserId,
@@ -471,10 +517,14 @@ class _ChatsScreenState extends State<ChatsScreen>
     final theme = Theme.of(context);
     final primary = AppColors.primary;
     
-    return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
-      body: SafeArea(
-        child: Column(
+    // At 768px+ the screen becomes a persistent two-pane messenger (list |
+    // conversation), matching the design reference's "TABLET · SPLIT"
+    // treatment, instead of full-screen push navigation. Below 768px this
+    // is byte-for-byte the original single-column list.
+    final splitWidth = MediaQuery.of(context).size.width;
+    final isSplit = splitWidth >= 768;
+
+    final listColumn = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
@@ -484,11 +534,14 @@ class _ChatsScreenState extends State<ChatsScreen>
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   if (!_selectionMode)
-                    Column(
+                    Flexible(
+                      child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
                           'YOUR CIRCLES',
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 12.5,
                             fontWeight: FontWeight.w700,
@@ -497,24 +550,34 @@ class _ChatsScreenState extends State<ChatsScreen>
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Text('Connect', style: theme.textTheme.displaySmall),
+                        Text('Connect', overflow: TextOverflow.ellipsis, style: theme.textTheme.displaySmall),
                       ],
+                      ),
                     )
                   else
                     Text('Connect', style: theme.textTheme.displaySmall),
                   if (!_selectionMode)
                     Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
+                        // Compact tap targets (not the default ~48px
+                        // IconButton) — the split view's list pane can be as
+                        // narrow as 268px, which the default sizing
+                        // overflowed alongside the "Connect" title.
                         IconButton(
                           tooltip: 'Calls',
-                          icon: Icon(Icons.call_outlined, color: primary),
+                          icon: Icon(Icons.call_outlined, color: primary, size: 20),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                           onPressed: () => Navigator.of(context).push(
                             MaterialPageRoute(builder: (_) => CallsScreen()),
                           ),
                         ),
                         IconButton(
                           tooltip: 'New group',
-                          icon: Icon(Icons.group_add, color: primary),
+                          icon: Icon(Icons.group_add, color: primary, size: 20),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                           onPressed: () async {
                             await Navigator.of(context).push(
                               MaterialPageRoute(builder: (_) => const CreateGroupScreen()),
@@ -530,7 +593,9 @@ class _ChatsScreenState extends State<ChatsScreen>
                           ),
                           child: IconButton(
                             tooltip: 'New message',
-                            icon: const Icon(Icons.edit_outlined, color: Colors.white, size: 20),
+                            icon: const Icon(Icons.edit_outlined, color: Colors.white, size: 18),
+                            padding: const EdgeInsets.all(6),
+                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                             onPressed: () {
                               Navigator.push(
                                 context,
@@ -688,12 +753,7 @@ class _ChatsScreenState extends State<ChatsScreen>
                                       final c = activeNow[i];
                                       final firstName = c.fullName.split(' ').first;
                                       return GestureDetector(
-                                        onTap: () => Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) => ChatDetailScreen(conversation: c),
-                                          ),
-                                        ),
+                                        onTap: () => _openConversation(context, c),
                                         child: SizedBox(
                                           width: 62,
                                           child: Column(
@@ -757,22 +817,7 @@ class _ChatsScreenState extends State<ChatsScreen>
                                   if (_selectionMode) {
                                     _toggleSelection(conv);
                                   } else {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => ChatDetailScreen(
-                                          conversation: conv,
-                                        ),
-                                      ),
-                                    ).then((_) {
-                                      // Refresh conversations after returning from chat
-                                      // Add mounted check to prevent setState after dispose
-                                      if (mounted) {
-                                        setState(() {
-                                          _conversationsFuture = _loadConversations();
-                                        });
-                                      }
-                                    });
+                                    _openConversation(context, conv);
                                   }
                                 },
                                 onLongPress: () => _toggleSelection(conv),
@@ -811,12 +856,7 @@ class _ChatsScreenState extends State<ChatsScreen>
                                 itemBuilder: (context, i) {
                                   final g = _groups[i];
                                   return GestureDetector(
-                                    onTap: () async {
-                                      await Navigator.of(context).push(
-                                        MaterialPageRoute(builder: (_) => GroupChatScreen(group: g)),
-                                      );
-                                      _loadGroups(); // refresh last-message preview on return
-                                    },
+                                    onTap: () => _openGroup(context, g),
                                     child: Container(
                                       padding: const EdgeInsets.all(13),
                                       decoration: BoxDecoration(
@@ -891,7 +931,56 @@ class _ChatsScreenState extends State<ChatsScreen>
               ),
             ),
           ],
-        ),
+        );
+
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      body: SafeArea(
+        child: isSplit
+            ? Row(
+                children: [
+                  SizedBox(
+                    width: splitWidth >= 1440 ? 320 : 268,
+                    child: listColumn,
+                  ),
+                  const VerticalDivider(width: 1),
+                  Expanded(child: _buildConversationDetailPane(theme)),
+                ],
+              )
+            : DesktopContentWrapper(maxWidth: 640, child: listColumn),
+      ),
+    );
+  }
+
+  /// Right-hand pane of the desktop split view — whichever conversation or
+  /// group was last tapped, embedded (no back button, list stays visible
+  /// alongside it), or an empty-state prompt if nothing's selected yet.
+  Widget _buildConversationDetailPane(ThemeData theme) {
+    if (_selectedGroup != null) {
+      return GroupChatScreen(
+        key: ValueKey('group-${_selectedGroup!.id}'),
+        group: _selectedGroup!,
+        embedded: true,
+        onEmbeddedClose: () => setState(() => _selectedGroup = null),
+      );
+    }
+    if (_selectedConversation != null) {
+      return ChatDetailScreen(
+        key: ValueKey('conv-${_selectedConversation!.userId}'),
+        conversation: _selectedConversation!,
+        embedded: true,
+      );
+    }
+    return Container(
+      color: theme.scaffoldBackgroundColor,
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.forum_outlined, size: 56, color: AppColors.mutedSolid),
+          const SizedBox(height: 12),
+          Text('Select a conversation', style: TextStyle(color: AppColors.mutedSolid, fontSize: 15)),
+        ],
       ),
     );
   }

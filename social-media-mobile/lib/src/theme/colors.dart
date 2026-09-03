@@ -67,6 +67,7 @@ class AppColorsLight {
 
   static const Color text = Color(0xFF0D2E23);
   static const Color muted = Color(0x850D2E23); // 52%
+  static const Color mutedSolid = Color(0xFF5B7B70); // solid equivalent of `muted`, for icons/dividers
   static const Color faint = Color(0x610D2E23); // 38%
   static const Color border = Color(0x210D2E23); // 13%
   static const Color hairline = Color(0x140D2E23); // 8%
@@ -97,4 +98,34 @@ class AppColorsLight {
   static const Color warn = Color(0xFFD97706);
   static const Color danger = Color(0xFFDC2626);
   static const Color onAccent = Color(0xFFFFFFFF);
+}
+
+/// Resolves to `AppColors` (dark) or `AppColorsLight` based on the active
+/// theme. Pre-home screens (splash/get-started/login/signup/OTP/forgot-
+/// password) previously hardcoded `AppColors.*` directly — always the dark
+/// palette, regardless of `ThemeMode` — which is why they always rendered
+/// dark even after the app's default theme became Light. Use this instead
+/// of the static classes anywhere a screen must render correctly in both
+/// modes; brand colors that are identical in both palettes (`primary`,
+/// `gold`) are fine to reference directly from `AppColors`.
+class ThemedColors {
+  final bool isDark;
+  const ThemedColors(this.isDark);
+
+  factory ThemedColors.of(BuildContext context) =>
+      ThemedColors(Theme.of(context).brightness == Brightness.dark);
+
+  Color get background => isDark ? AppColors.background : AppColorsLight.background;
+  Color get surface => isDark ? AppColors.surface : AppColorsLight.surface;
+  Color get surface2 => isDark ? AppColors.surface2 : AppColorsLight.surface2;
+  Color get text => isDark ? AppColors.text : AppColorsLight.text;
+  Color get muted => isDark ? AppColors.muted : AppColorsLight.muted;
+  Color get mutedSolid => isDark ? AppColors.mutedSolid : AppColorsLight.mutedSolid;
+  Color get faint => isDark ? AppColors.faint : AppColorsLight.faint;
+  Color get border => isDark ? AppColors.border : AppColorsLight.border;
+  Color get hairline => isDark ? AppColors.hairline : AppColorsLight.hairline;
+  Color get danger => isDark ? AppColors.danger : AppColorsLight.danger;
+  Color get success => isDark ? AppColors.success : AppColorsLight.success;
+  Color get warn => isDark ? AppColors.warn : AppColorsLight.warn;
+  Color get accentSubtle100 => isDark ? AppColors.accentSubtle100 : AppColorsLight.accentSubtle100;
 }

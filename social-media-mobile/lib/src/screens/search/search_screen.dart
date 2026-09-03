@@ -9,6 +9,8 @@ import '../../components/search_row.dart';
 import '../../services/api_service.dart';
 import '../../state/app_state_manager.dart';
 import '../../utils/search_utils.dart';
+import '../../responsive/breakpoints.dart';
+import '../../responsive/desktop_content_wrapper.dart';
 
 import '../user_profile_screen.dart';
 import 'hashtag_results_screen.dart';
@@ -173,7 +175,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
 
     final scaffold = Scaffold(
         body: SafeArea(
-          child: Column(
+          child: DesktopContentWrapper(
+            // Discover is a dashboard, not a reading column — the design
+            // reference caps it at 1120, wider than the 640/700 feed cap
+            // every other screen uses.
+            maxWidth: 1120,
+            child: Column(
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -289,6 +296,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                               ],
 
                               // Trending hero — the top hashtag by post count.
+                              // At tablet+ this sits beside the rest of the
+                              // trending list (2/3 + 1/3) instead of a
+                              // stacked hero-then-pills column, matching the
+                              // design reference's "trending hero 2/3, topic
+                              // list 1/3" dashboard treatment.
                               if (_trending.isNotEmpty) ...[
                                 Padding(
                                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 13),
@@ -296,17 +308,41 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                                 ),
                                 Padding(
                                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                                  child: _TrendingHero(
-                                    tag: _trending.first['tag']?.toString() ?? '',
-                                    count: (_trending.first['postCount'] as num?)?.toInt() ?? 0,
-                                    onTap: () => _openHashtag(_trending.first['tag']?.toString() ?? ''),
-                                  ),
+                                  child: context.isDesktopClass && _trending.length > 1
+                                      ? Row(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Expanded(
+                                              flex: 2,
+                                              child: _TrendingHero(
+                                                tag: _trending.first['tag']?.toString() ?? '',
+                                                count: (_trending.first['postCount'] as num?)?.toInt() ?? 0,
+                                                onTap: () => _openHashtag(_trending.first['tag']?.toString() ?? ''),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 16),
+                                            Expanded(
+                                              flex: 1,
+                                              child: _TopicsList(
+                                                tags: _trending.skip(1).toList(),
+                                                onTap: _openHashtag,
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                      : _TrendingHero(
+                                          tag: _trending.first['tag']?.toString() ?? '',
+                                          count: (_trending.first['postCount'] as num?)?.toInt() ?? 0,
+                                          onTap: () => _openHashtag(_trending.first['tag']?.toString() ?? ''),
+                                        ),
                                 ),
                                 const SizedBox(height: 28),
                               ],
 
                               // Topic pills — remaining trending hashtags.
-                              if (_trending.length > 1) ...[
+                              // Mobile/tablet only; desktop shows the same
+                              // hashtags in the TOPICS RISING list above.
+                              if (_trending.length > 1 && !context.isDesktopClass) ...[
                                 Padding(
                                   padding: const EdgeInsets.symmetric(horizontal: 16),
                                   child: Wrap(
@@ -334,24 +370,48 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                               ],
 
                               // People to know — real follow suggestions.
+                              // Horizontal scroll row on mobile (unchanged);
+                              // a proper grid (2-up tablet, 4-up desktop)
+                              // once there's room, per the design reference.
                               if (_suggested.isNotEmpty) ...[
                                 Padding(
                                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 13),
                                   child: Text('People to know', style: theme.textTheme.headlineSmall),
                                 ),
-                                SizedBox(
-                                  height: 224,
-                                  child: ListView.separated(
-                                    scrollDirection: Axis.horizontal,
+                                if (context.isDesktopClass)
+                                  Padding(
                                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                                    itemCount: _suggested.length,
-                                    separatorBuilder: (_, __) => const SizedBox(width: 14),
-                                    itemBuilder: (c, i) => _PersonCard(
-                                      user: _suggested[i],
-                                      onOpenProfile: _openProfile,
+                                    child: GridView.builder(
+                                      shrinkWrap: true,
+                                      physics: const NeverScrollableScrollPhysics(),
+                                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: context.hasContextPanel ? 4 : 2,
+                                        mainAxisSpacing: 14,
+                                        crossAxisSpacing: 14,
+                                        childAspectRatio: 0.92,
+                                      ),
+                                      itemCount: _suggested.length,
+                                      itemBuilder: (c, i) => _PersonCard(
+                                        user: _suggested[i],
+                                        onOpenProfile: _openProfile,
+                                        expand: true,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  SizedBox(
+                                    height: 224,
+                                    child: ListView.separated(
+                                      scrollDirection: Axis.horizontal,
+                                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                                      itemCount: _suggested.length,
+                                      separatorBuilder: (_, __) => const SizedBox(width: 14),
+                                      itemBuilder: (c, i) => _PersonCard(
+                                        user: _suggested[i],
+                                        onOpenProfile: _openProfile,
+                                      ),
                                     ),
                                   ),
-                                ),
                                 const SizedBox(height: 28),
                               ],
 
@@ -366,8 +426,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                                   child: GridView.builder(
                                     shrinkWrap: true,
                                     physics: const NeverScrollableScrollPhysics(),
-                                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: 2,
+                                    // 2-up on mobile/tablet, 4-up once the
+                                    // panel itself is wide enough to hold
+                                    // four tiles at a readable size — matches
+                                    // the design reference's discovery grid.
+                                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: context.hasContextPanel ? 4 : 2,
                                       mainAxisSpacing: 14,
                                       crossAxisSpacing: 14,
                                       childAspectRatio: 0.78,
@@ -431,6 +495,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                 ),
               ],
             ],
+            ),
           ),
         ),
     );
@@ -514,12 +579,73 @@ class _TrendingHero extends StatelessWidget {
   }
 }
 
+/// Desktop-only companion to [_TrendingHero] — the remaining trending
+/// hashtags as a compact vertical list ("TOPICS RISING" in the design
+/// reference) instead of the mobile/tablet Wrap of pills, since a Wrap
+/// doesn't read well squeezed into a narrow 1/3-width column.
+class _TopicsList extends StatelessWidget {
+  final List<Map<String, dynamic>> tags;
+  final void Function(String tag) onTap;
+  const _TopicsList({required this.tags, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.cardColor,
+        border: Border.all(color: theme.dividerColor),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (int i = 0; i < tags.length; i++) ...[
+            if (i > 0) Divider(height: 1, color: theme.dividerColor),
+            InkWell(
+              onTap: () => onTap(tags[i]['tag']?.toString() ?? ''),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('#${tags[i]['tag']?.toString() ?? ''}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+                          const SizedBox(height: 2),
+                          Text('${(tags[i]['postCount'] as num?)?.toInt() ?? 0} posts today',
+                              style: TextStyle(fontSize: 11.5, color: AppColors.mutedSolid)),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, size: 18, color: theme.iconTheme.color),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// "People to know" card — squircle avatar, name, meta, Follow button with
 /// optimistic state, matching the reference's discover person card.
 class _PersonCard extends StatefulWidget {
   final Map<String, dynamic> user;
   final void Function(int userId, {String? username}) onOpenProfile;
-  const _PersonCard({required this.user, required this.onOpenProfile});
+  /// True when placed as a grid cell (tablet/desktop "People to know" grid)
+  /// instead of the mobile horizontal-scroll row — fills the cell's width
+  /// instead of the fixed 172px card width the scroll row needs.
+  final bool expand;
+  const _PersonCard({required this.user, required this.onOpenProfile, this.expand = false});
 
   @override
   State<_PersonCard> createState() => _PersonCardState();
@@ -569,7 +695,7 @@ class _PersonCardState extends State<_PersonCard> {
     return GestureDetector(
       onTap: () => widget.onOpenProfile(userId, username: username),
       child: Container(
-        width: 172,
+        width: widget.expand ? double.infinity : 172,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
         decoration: BoxDecoration(
           color: theme.cardColor,

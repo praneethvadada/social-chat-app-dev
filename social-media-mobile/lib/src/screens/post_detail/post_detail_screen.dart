@@ -15,6 +15,7 @@ import 'package:share_plus/share_plus.dart';
 import '../create_post/create_post_screen.dart';
 import '../../utils/time_utils.dart';
 import '../../state/saved_posts_notifier.dart';
+import '../../responsive/desktop_content_wrapper.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
 class PostDetailScreen extends ConsumerStatefulWidget {
@@ -62,7 +63,9 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
           ),
         ),
       ),
-      body: SingleChildScrollView(
+      body: DesktopContentWrapper(
+        maxWidth: 640,
+        child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -203,6 +206,7 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
 
             const SizedBox(height: 16),
           ],
+        ),
         ),
       ),
     );

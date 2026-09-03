@@ -12,6 +12,8 @@ import '../status/status_ring_row.dart';
 import '../../utils/friendly_error.dart';
 import '../../theme/colors.dart';
 import '../../theme/theme_provider.dart';
+import '../../responsive/breakpoints.dart';
+import 'home_context_panel.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -223,7 +225,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
                     size: 24,
                   ),
                   tooltip: 'Toggle theme',
-                  onPressed: () => ref.read(themeModeProvider.notifier).toggleTheme(),
+                  onPressed: () async {
+                    final userId = await ApiService.getUserId();
+                    ref.read(themeModeProvider.notifier).toggleTheme(userId: userId);
+                  },
                 ),
               ],
             ),
@@ -231,15 +236,66 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
         ),
       ),
       body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: () async {
-            await ref.read(postProvider.notifier).loadPosts();
-            await _statusRingKey.currentState?.refresh();
+        child: Builder(
+          builder: (context) {
+            final feed = _buildFeed(context, ref, theme, postsAsync);
+            // Below 1024px this is exactly the original single-column feed.
+            // At 1024px+, per the design reference ("the feed sits in a
+            // 620–700px reading column with trending, suggestions and
+            // online contacts to its right"): cap the feed's own width and
+            // add a context panel next to it instead of letting the feed
+            // stretch to the full window.
+            //
+            // Deliberately keyed off the real window width (MediaQuery, via
+            // `context.hasContextPanel`/`breakpoint`) rather than this
+            // widget's own local constraints — HomeScreen is nested inside
+            // MainApp's rail `Expanded(...)`, so its LOCAL constraints are
+            // already (viewport − rail width), which crosses each
+            // threshold earlier than the design's viewport-width tiers
+            // intend. Every later screen with its own breakpoint logic
+            // must follow the same rule.
+            if (!context.hasContextPanel) return feed;
+
+            final width = MediaQuery.of(context).size.width;
+            final panelWidth = width >= BreakpointWidths.largeDesktop
+                ? 360.0
+                : (width >= BreakpointWidths.desktop ? 320.0 : 280.0);
+            final feedCap = width >= BreakpointWidths.largeDesktop ? 700.0 : 640.0;
+
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: feedCap),
+                      child: feed,
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  width: panelWidth,
+                  child: const HomeContextPanel(),
+                ),
+              ],
+            );
           },
-          child: CustomScrollView(
-            key: const PageStorageKey<String>('home_feed_scroll'),
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFeed(BuildContext context, WidgetRef ref, ThemeData theme, AsyncValue<List<Post>> postsAsync) {
+    return RefreshIndicator(
+      onRefresh: () async {
+        await ref.read(postProvider.notifier).loadPosts();
+        await _statusRingKey.currentState?.refresh();
+      },
+      child: CustomScrollView(
+        key: const PageStorageKey<String>('home_feed_scroll'),
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
               SliverToBoxAdapter(
                 child: _PulseHeader(
                   postCount: postsAsync is AsyncData<List<Post>> ? postsAsync.value.length : 0,
@@ -344,9 +400,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
               ),
             ],
           ),
-        ),
-      ),
-    );
+      );
   }
 }
 

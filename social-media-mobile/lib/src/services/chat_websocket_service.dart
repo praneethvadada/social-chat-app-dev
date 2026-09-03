@@ -4,9 +4,17 @@ import 'package:stomp_dart_client/stomp_frame.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show min;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/api_config.dart';
 import '../models/message.dart';
+import '../navigation/root_navigator_key.dart';
+import '../state/app_state_manager.dart';
 import '../state/chat_store.dart';
+import 'api_service.dart';
+import 'chat_sync_service.dart';
+import 'mobile_storage_gate.dart';
 
 /// Typedef for notification listeners (required by other code)
 typedef OnConnectionChanged = void Function(bool isConnected);
@@ -24,6 +32,7 @@ class ChatWebSocketService {
   ChatStore? _chatStore;
   int _currentUserId = 0;
   String? _currentToken;
+  final ChatSyncService _chatSyncService = ChatSyncService();
   
   // Message state tracking: clientMessageId → MessageState
   final Map<String, MessageState> _messageStates = {};
@@ -319,8 +328,28 @@ class ChatWebSocketService {
     // (✓) or marked failed (❌) instead of silently assumed delivered.
     _subscribeToMessageAcks();
 
+    // Security events (Phase 3's local_storage.revoked, Phase 5's
+    // session.revoked) — best-effort real-time nudges from auth-service.
+    _subscribeToSecurityEvents();
+
     _processOfflineQueue();
-    
+
+    // Phase 4: catch up on anything that arrived while disconnected. Fires on
+    // every connect (initial AND reconnect), not just app cold-start - a
+    // reconnect after a network blip needs the same catch-up as a fresh
+    // launch. Only writes local data on a device that currently owns local
+    // storage (Phase 3) - re-checked every reconnect rather than cached once,
+    // so a device that loses ownership mid-session stops here too.
+    if (!kIsWeb && _chatStore != null) {
+      MobileStorageGate.silentCheck().then((isOwner) {
+        if (isOwner == true) {
+          _chatSyncService.syncAll(_chatStore!, _currentUserId).catchError((e) {
+            print('[ChatWebSocketService] ⚠️ Chat sync failed: $e');
+          });
+        }
+      });
+    }
+
     _notifyPresenceUpdate(true);
     
     // ✅ Request initial presence status (who is already online)
@@ -360,6 +389,42 @@ class ChatWebSocketService {
     print('[ChatWebSocketService] Headers: ${frame.headers}');
     print('[ChatWebSocketService] Body: ${frame.body}');
     _isConnected = false;
+
+    // Phase 5: WebSocketSecurityInterceptor rejects every frame from a
+    // revoked session (single-active-web-session takeover, remote device
+    // logout) with a "Session revoked" STOMP ERROR — connection-scoped, so
+    // unlike the best-effort /queue/security push, receiving THIS error
+    // unambiguously means it's OUR OWN session, not another device's.
+    final signal = ('${frame.headers['message'] ?? ''} ${frame.body ?? ''}').toLowerCase();
+    if (signal.contains('session revoked')) {
+      print('[ChatWebSocketService] 🔒 Session revoked by server — forcing logout');
+      _handleForcedLogout();
+    }
+  }
+
+  /// Ends the local session the same way a manual logout does (stop
+  /// reconnect attempts, clear local chat data, sign out server-side,
+  /// return to the login screen) but triggered from the WebSocket layer
+  /// itself rather than a user tapping a button. Uses the app's global
+  /// navigator key to reach Riverpod/app state from this singleton service,
+  /// which otherwise has no BuildContext of its own.
+  Future<void> _handleForcedLogout() async {
+    await clear(); // stops the auto-reconnect loop before it can retry with the now-dead token
+    try {
+      await ApiService.logout();
+    } catch (e) {
+      print('[ChatWebSocketService] ⚠️ Logout cleanup failed (session was already revoked server-side): $e');
+    }
+
+    final context = rootNavigatorKey.currentContext;
+    if (context == null) return;
+    ProviderScope.containerOf(context, listen: false)
+        .read(appStateProvider.notifier)
+        .logout();
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('You were logged out because your account was signed in on another device.'),
+      duration: Duration(seconds: 6),
+    ));
   }
 
   void _onWebSocketError(dynamic error) {
@@ -631,6 +696,94 @@ class ChatWebSocketService {
     } catch (e) {
       print('[ChatWebSocketService] ❌ ERROR SUBSCRIBING to notifications: $e');
     }
+  }
+
+  /// Best-effort real-time security notices pushed via auth-service's relay
+  /// (see ChatsServiceRelayClient / /internal/relay/to-user server-side).
+  /// These are account-wide broadcasts, not scoped to one device/session, so
+  /// only notices that are safe to act on unconditionally — regardless of
+  /// which of the account's devices they were really about — are handled
+  /// here. `session.revoked` is deliberately NOT one of these (see
+  /// _onStompError's "Session revoked" ERROR-frame handling instead, which
+  /// is connection-scoped and therefore unambiguous).
+  void _subscribeToSecurityEvents() {
+    final topic = '/user/queue/security';
+    if (_activeSubscriptions.contains(topic)) {
+      print('[ChatWebSocketService] ⚠️ Already subscribed to $topic');
+      return;
+    }
+    try {
+      print('[ChatWebSocketService] 🔔 SUBSCRIBING to security events at $topic...');
+      final unsubscribeFn = _stompClient.subscribe(
+        destination: topic,
+        callback: _onSecurityEvent,
+        headers: {'id': 'sub-security-${_currentUserId}', 'ack': 'auto'},
+      );
+      _subscriptionHandlers[topic] = unsubscribeFn;
+      _activeSubscriptions.add(topic);
+      print('[ChatWebSocketService] ✅ Subscribed to $topic');
+    } catch (e) {
+      print('[ChatWebSocketService] ❌ ERROR SUBSCRIBING to security events: $e');
+    }
+  }
+
+  void _onSecurityEvent(StompFrame frame) {
+    try {
+      final data = jsonDecode(frame.body ?? '{}') as Map<String, dynamic>;
+      final type = data['type'] as String?;
+      print('[ChatWebSocketService] 🔒 Security event received: $type');
+      if (type == 'local_storage.revoked' && !kIsWeb) {
+        _handleLocalStorageRevoked(data);
+      } else if (type == 'session.revoked' && kIsWeb) {
+        _handleSessionRevokedBroadcast(data);
+      }
+    } catch (e) {
+      print('[ChatWebSocketService] ⚠️ Error processing security event: $e');
+    }
+  }
+
+  /// These relay pushes are account-wide (every connected device gets them),
+  /// not scoped to one device/session — so before reacting, compare the
+  /// payload's numeric backend device id against our own (persisted at
+  /// login from AuthResponse.deviceId, see ApiService.getBackendDeviceId).
+  /// Without this a device could act on a notice that was really about a
+  /// DIFFERENT device on the same account.
+  Future<void> _handleLocalStorageRevoked(Map<String, dynamic> data) async {
+    final myDeviceId = await ApiService.getBackendDeviceId();
+    final revokedDeviceId = data['revokedDeviceId'];
+    // Can't disambiguate (pre-Phase-5 session with no stored device id) —
+    // fall back to the always-safe unconditional re-check rather than
+    // silently doing nothing.
+    final pertainsToMe = myDeviceId == null || revokedDeviceId == null || myDeviceId == revokedDeviceId;
+    if (pertainsToMe) {
+      // MobileStorageGate.silentCheck() is itself idempotent/self-correcting
+      // against the server's actual state, so this is safe even when it
+      // turns out to be a false positive.
+      await MobileStorageGate.silentCheck();
+    } else {
+      print('[ChatWebSocketService] 🔒 local_storage.revoked was about a different device (id=$revokedDeviceId, mine=$myDeviceId) — ignoring');
+    }
+  }
+
+  /// Single-active-web-session takeover notice (Phase 5). Unlike
+  /// local_storage.revoked, acting on this incorrectly means logging out a
+  /// device that's still perfectly valid — so unlike the method above, an
+  /// unresolvable comparison (no stored device id) does nothing here rather
+  /// than guessing; the connection-scoped STOMP "Session revoked" ERROR
+  /// frame (see _onStompError) is the reliable fallback either way.
+  Future<void> _handleSessionRevokedBroadcast(Map<String, dynamic> data) async {
+    final myDeviceId = await ApiService.getBackendDeviceId();
+    final newDeviceId = data['newDeviceId'];
+    if (myDeviceId == null || newDeviceId == null) {
+      print('[ChatWebSocketService] 🔒 session.revoked received but cannot self-identify — deferring to STOMP error handling');
+      return;
+    }
+    if (newDeviceId == myDeviceId) {
+      print('[ChatWebSocketService] 🔒 session.revoked is about OUR OWN new login — ignoring');
+      return;
+    }
+    print('[ChatWebSocketService] 🔒 This web session was replaced by device $newDeviceId — forcing logout');
+    await _handleForcedLogout();
   }
 
   /// Subscribe to incoming call signals: /topic/calls.{userId}

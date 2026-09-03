@@ -2,6 +2,7 @@ package com.socialmedia.auth.controller;
 
 import com.socialmedia.auth.dto.OtpRequest;
 import com.socialmedia.auth.dto.OtpVerifyRequest;
+import com.socialmedia.auth.entity.OtpVerification.Purpose;
 import com.socialmedia.auth.service.OtpService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -33,7 +34,7 @@ public class OtpController {
     public ResponseEntity<?> sendOtp(@Valid @RequestBody OtpRequest request) {
         try {
             System.out.println("[OTP] Received send-otp request for email: " + request.getEmail());
-            otpService.sendOtp(request.getEmail());
+            otpService.sendOtp(request.getEmail(), Purpose.EMAIL_VERIFICATION);
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
             response.put("message", "OTP sent successfully to your email");
@@ -57,7 +58,7 @@ public class OtpController {
     @PostMapping("/verify-otp")
     public ResponseEntity<?> verifyOtp(@Valid @RequestBody OtpVerifyRequest request) {
         try {
-            boolean isValid = otpService.verifyOtp(request.getEmail(), request.getOtp());
+            boolean isValid = otpService.verifyOtp(request.getEmail(), request.getOtp(), Purpose.EMAIL_VERIFICATION);
             
             Map<String, Object> response = new HashMap<>();
             if (isValid) {
@@ -85,7 +86,7 @@ public class OtpController {
     @PostMapping("/resend-otp")
     public ResponseEntity<?> resendOtp(@Valid @RequestBody OtpRequest request) {
         try {
-            otpService.resendOtp(request.getEmail());
+            otpService.resendOtp(request.getEmail(), Purpose.EMAIL_VERIFICATION);
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
             response.put("message", "OTP resent successfully to your email");

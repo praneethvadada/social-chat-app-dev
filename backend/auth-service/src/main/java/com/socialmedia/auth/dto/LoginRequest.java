@@ -18,6 +18,10 @@ public class LoginRequest {
     @NotBlank(message = "Password is required")
     private String password;
 
+    // Optional — absent for not-yet-updated clients (device/session tracking
+    // is simply skipped in that case; see AuthService.login()).
+    private DeviceInfoRequest deviceInfo;
+
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
     public String getUsername() { return username; }
@@ -26,4 +30,6 @@ public class LoginRequest {
     public void setIdentifier(String identifier) { this.identifier = identifier; }
     public String getPassword() { return password; }
     public void setPassword(String password) { this.password = password; }
+    public DeviceInfoRequest getDeviceInfo() { return deviceInfo; }
+    public void setDeviceInfo(DeviceInfoRequest deviceInfo) { this.deviceInfo = deviceInfo; }
 }

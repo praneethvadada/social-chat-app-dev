@@ -9,7 +9,14 @@ import '../forgot_password/forgot_password_otp_screen.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
 class PrivacySettingsScreen extends ConsumerStatefulWidget {
-  const PrivacySettingsScreen({super.key});
+  /// True when shown as the detail pane of the desktop Settings
+  /// index+detail split instead of pushed as its own route — hides the
+  /// back arrow (nothing to pop) and, in `_deleteAccount`, skips the
+  /// self-pop that closes "this screen" (there's no pushed route to close;
+  /// `appNotifier.closeModal()` right after already handles leaving the
+  /// settings panel either way).
+  final bool embedded;
+  const PrivacySettingsScreen({super.key, this.embedded = false});
 
   @override
   ConsumerState<PrivacySettingsScreen> createState() => _PrivacySettingsScreenState();
@@ -265,7 +272,9 @@ class _PrivacySettingsScreenState extends ConsumerState<PrivacySettingsScreen> {
         
         // Close loading dialog and this screen
         Navigator.of(context).pop(); // Close loading
-        Navigator.of(context).pop(); // Close privacy settings screen
+        if (!widget.embedded) {
+          Navigator.of(context).pop(); // Close privacy settings screen
+        }
         
         // Clear app state providers
         ref.read(postProvider.notifier).clearPosts();
@@ -296,7 +305,7 @@ class _PrivacySettingsScreenState extends ConsumerState<PrivacySettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Privacy Settings')),
+      appBar: AppBar(automaticallyImplyLeading: !widget.embedded, title: const Text('Privacy Settings')),
       body: ListView(
         children: [
           SwitchListTile(

@@ -16,9 +16,11 @@ import org.springframework.security.web.SecurityFilterChain;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final InternalServiceAuthFilter internalServiceAuthFilter;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter, InternalServiceAuthFilter internalServiceAuthFilter) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.internalServiceAuthFilter = internalServiceAuthFilter;
     }
 
     @Bean
@@ -37,16 +39,32 @@ public class SecurityConfig {
                 .authorizeHttpRequests(requests -> requests
                 .requestMatchers(
                         "/register", "/login", "/api/auth/register", "/api/auth/login",
+                        "/login/2fa/verify", "/login/2fa/resend",
+                        "/login/web-session/confirm",
                         "/auth/send-otp", "/auth/verify-otp", "/auth/resend-otp",
                         "/send-otp", "/verify-otp", "/resend-otp",
                         "/otp/send", "/otp/verify", "/password-reset/**",
                         "/check-availability", "/auth/check-availability",
                         "/error", "/refresh", "/health", "/actuator/**",
                         "/swagger-ui/**", "/api-docs/**", "/swagger-ui.html",
-                        "/account", "/logout",
+                        // "/account" (DELETE) deliberately NOT here anymore either
+                        // (Phase 10 hardening) — it used to verify identity via a
+                        // client-supplied {email, password} with no Bearer token
+                        // and no 2FA check at all, meaning the single most
+                        // destructive action in the app could be performed with
+                        // nothing but a leaked password. Same reasoning as "/logout"
+                        // below: derives userId from the validated JWT instead, so
+                        // it needs anyRequest().authenticated() to actually apply.
+                        // "/logout" deliberately NOT here anymore — it used to
+                        // trust a spoofable X-User-Id header for identity
+                        // (permitAll was required for that to even compile);
+                        // it now derives userId from the validated JWT like
+                        // every other protected endpoint, so it needs
+                        // anyRequest().authenticated() below to actually apply.
                         "/users/*/fcm-token", "/users/*/username",  // Internal service-to-service calls
                         "/users/*/summary", "/users/summaries",     // Internal profile lookups (chats-service)
                         "/users/*/identity",                       // Internal identity write (social-service)
+                        "/internal/sessions/*/status",              // Internal session revocation check (chats-service, Phase 5)
                         // Phone OTP endpoints are path-shared between the unauthenticated
                         // PHONE_SIGNUP purpose and the authenticated PHONE_VERIFICATION
                         // ("link phone to my existing account") purpose — Spring Security
@@ -61,6 +79,21 @@ public class SecurityConfig {
                 ).permitAll()
                 .anyRequest().authenticated()
                 )
+                // Phase 10 hardening: rejects any caller of /users/**,
+                // /internal/sessions/** that doesn't present the shared
+                // internal-service secret — see the filter's own doc comment
+                // for why these paths needed this despite being permitAll.
+                // Anchored to UsernamePasswordAuthenticationFilter (a
+                // Spring-Security-recognized filter type), NOT
+                // JwtAuthenticationFilter.class — addFilterBefore can only
+                // order relative to filters Spring Security's own ordering
+                // table knows about; anchoring to a custom filter class
+                // throws "does not have a registered order" at context
+                // startup. Relative order vs. jwtAuthenticationFilter itself
+                // doesn't matter: that filter never rejects a request on its
+                // own (see its own doc comment), it only populates request
+                // attributes, so either running first is safe.
+                .addFilterBefore(internalServiceAuthFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

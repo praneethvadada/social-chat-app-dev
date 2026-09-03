@@ -24,6 +24,7 @@ import java.util.UUID;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -137,8 +138,10 @@ class AuthPhoneEmailIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessToken", notNullValue()));
 
-        // Logout
-        mockMvc.perform(post("/logout").header("X-User-Id", userId.toString()))
+        // Logout — derives identity from the Bearer token now (the old
+        // X-User-Id-header path was a spoofable-identity bug, fixed in
+        // Phase 1 of the device/session work).
+        mockMvc.perform(post("/logout").header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk());
     }
 
@@ -192,8 +195,10 @@ class AuthPhoneEmailIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessToken", notNullValue()));
 
-        // Logout
-        mockMvc.perform(post("/logout").header("X-User-Id", userId.toString()))
+        // Logout — derives identity from the Bearer token now (the old
+        // X-User-Id-header path was a spoofable-identity bug, fixed in
+        // Phase 1 of the device/session work).
+        mockMvc.perform(post("/logout").header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk());
     }
 
@@ -286,5 +291,48 @@ class AuthPhoneEmailIntegrationTest {
                         .content(objectMapper.writeValueAsString(Map.of("identifier", phone, "password", "Password@123"))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("PHONE_NOT_VERIFIED"));
+    }
+
+    @Test
+    void deviceSession_registeredOnLogin_listedThenRevoked_thenTokenStopsWorking() throws Exception {
+        doNothing().when(socialServiceClient).createUserProfile(any());
+        String email = uniqueEmail();
+        String username = "itestDevice" + System.nanoTime();
+
+        String emailOtp = captureEmailOtp(email);
+        mockMvc.perform(post("/verify-otp").contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("email", email, "otp", emailOtp))))
+                .andExpect(status().isOk());
+
+        String deviceInfo = "\"deviceInfo\":{\"deviceId\":\"itest-device-" + UUID.randomUUID()
+                + "\",\"platform\":\"ANDROID\",\"osName\":\"Android\",\"osVersion\":\"14\",\"appVersion\":\"1.0.0\",\"deviceModel\":\"Pixel 8\"}";
+        String registerBody = "{\"username\":\"" + username + "\",\"password\":\"Password@123\",\"email\":\""
+                + email + "\",\"fullName\":\"Device Test\"," + deviceInfo + "}";
+        String registerResponse = mockMvc.perform(post("/register").contentType(MediaType.APPLICATION_JSON).content(registerBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken", notNullValue()))
+                .andReturn().getResponse().getContentAsString();
+        Map<String, Object> tokens = objectMapper.readValue(registerResponse, Map.class);
+        String accessToken = (String) tokens.get("accessToken");
+
+        // The registered device shows up, is marked as this device, and has an ACTIVE session.
+        String devicesResponse = mockMvc.perform(get("/devices").header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].platform").value("ANDROID"))
+                .andExpect(jsonPath("$[0].sessionStatus").value("ACTIVE"))
+                // Jackson serializes a boolean getter isCurrentDevice() as
+                // JSON key "currentDevice" (strips the "is" prefix) — the
+                // Flutter model must match this, not the Java field name.
+                .andExpect(jsonPath("$[0].currentDevice").value(true))
+                .andReturn().getResponse().getContentAsString();
+        java.util.List<Map<String, Object>> devices = objectMapper.readValue(devicesResponse, java.util.List.class);
+        Number deviceId = (Number) devices.get(0).get("deviceId");
+
+        // Revoking it makes the SAME still-unexpired access token stop working on its very next request.
+        mockMvc.perform(post("/devices/" + deviceId + "/revoke").header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/devices").header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isForbidden());
     }
 }

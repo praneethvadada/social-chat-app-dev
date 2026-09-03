@@ -10,12 +10,16 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface MessageRepository extends JpaRepository<Message, Long> {
-    
+
     @Query("SELECT m FROM Message m WHERE (m.senderId = :userId1 AND m.receiverId = :userId2) OR (m.senderId = :userId2 AND m.receiverId = :userId1) ORDER BY m.createdAt DESC")
     Page<Message> findConversation(@Param("userId1") Long userId1, @Param("userId2") Long userId2, Pageable pageable);
+
+    /** Phase 4: idempotent-send lookup - same sender retrying the same clientMessageId gets the original row back. */
+    Optional<Message> findFirstBySenderIdAndClientMessageId(Long senderId, String clientMessageId);
     
     @Query("SELECT m FROM Message m WHERE m.receiverId = :userId AND m.isRead = false")
     List<Message> findUnreadMessages(@Param("userId") Long userId);
@@ -48,6 +52,15 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
 
     @Query("SELECT m FROM Message m WHERE m.conversationId = :conversationId ORDER BY m.createdAt DESC LIMIT 1")
     Message findLastInConversation(@Param("conversationId") Long conversationId);
+
+    /**
+     * Phase 4: incremental sync delta - everything in this conversation newer
+     * than the caller's last-seen id, oldest-first so the client can append in
+     * order. {@code id} is a safe monotonic cursor (IDENTITY PK) - no clock-skew
+     * or duplicate-timestamp risk the way createdAt would have.
+     */
+    Page<Message> findByConversationIdAndIdGreaterThanOrderByIdAsc(
+            Long conversationId, Long cursor, Pageable pageable);
 
     /** Unread count for a group member who has never opened the conversation. */
     @Query("SELECT COUNT(m) FROM Message m WHERE m.conversationId = :conversationId " +

@@ -3,6 +3,7 @@ package com.socialmedia.chats.service;
 import com.socialmedia.chats.client.BlockClient;
 import com.socialmedia.chats.client.UserLookupClient;
 import com.socialmedia.chats.dto.ConversationResponse;
+import com.socialmedia.chats.dto.ConversationSyncResponse;
 import com.socialmedia.chats.dto.GroupMessageRequest;
 import com.socialmedia.chats.dto.MessageRequest;
 import com.socialmedia.chats.dto.MessageResponse;
@@ -10,7 +11,9 @@ import com.socialmedia.chats.dto.UserSummary;
 import com.socialmedia.chats.entity.ChatDeletion;
 import com.socialmedia.chats.entity.Message;
 import com.socialmedia.chats.entity.MessageReaction;
+import com.socialmedia.chats.entity.ConversationMember;
 import com.socialmedia.chats.repository.ChatDeletionRepository;
+import com.socialmedia.chats.repository.ConversationMemberRepository;
 import com.socialmedia.chats.repository.MessageReactionRepository;
 import com.socialmedia.chats.repository.MessageRepository;
 import lombok.RequiredArgsConstructor;
@@ -50,6 +53,7 @@ public class MessageService {
     private final PresenceService presenceService;
     private final ConversationService conversationService;
     private final MessageReactionRepository reactionRepository;
+    private final ConversationMemberRepository conversationMemberRepository;
 
     @Value("${aws.s3.bucket-name:social-media-gidut-54513}")
     private String bucketName;
@@ -59,6 +63,15 @@ public class MessageService {
 
     @Transactional
     public MessageResponse sendMessage(MessageRequest request, Long senderId) {
+        // Phase 4: idempotent retry - a client that queued this offline (or
+        // never got its ack) resends with the SAME clientMessageId. Returning
+        // the original row instead of inserting again is what makes that safe;
+        // without this, a flaky ack turns one message into two on the wire.
+        MessageResponse existing = findExistingByClientMessageId(senderId, request.getClientMessageId());
+        if (existing != null) {
+            return existing;
+        }
+
         // Block check now goes to posts-service over REST (owner of blocked_users).
         if (blockClient.isEitherBlocked(senderId, request.getReceiverId())) {
             throw new RuntimeException("Cannot send message to this user");
@@ -90,7 +103,20 @@ public class MessageService {
 
         UserSummary sender = userLookupClient.getUser(senderId);
 
-        Message savedMessage = messageRepository.save(message);
+        Message savedMessage;
+        try {
+            savedMessage = messageRepository.save(message);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // Two near-simultaneous retries both passed the check above before
+            // either committed - the unique constraint caught what the
+            // read-then-write check above couldn't. Whoever inserted first wins;
+            // return that row rather than surfacing a spurious 500 to the loser.
+            MessageResponse raced = findExistingByClientMessageId(senderId, request.getClientMessageId());
+            if (raced != null) {
+                return raced;
+            }
+            throw e;
+        }
         System.out.println("[MessageService] ✅ MESSAGE SAVED id=" + savedMessage.getId());
 
         MessageResponse response = mapToResponse(savedMessage);
@@ -167,6 +193,12 @@ public class MessageService {
      */
     @Transactional
     public MessageResponse sendGroupMessage(Long conversationId, Long senderId, GroupMessageRequest request) {
+        // Phase 4: same idempotent-retry guarantee as the 1:1 path.
+        MessageResponse existing = findExistingByClientMessageId(senderId, request.getClientMessageId());
+        if (existing != null) {
+            return existing;
+        }
+
         // G5: who may post is a per-group setting (spec §R), not a fixed rule.
         conversationService.requirePermission(
                 conversationId, senderId, ConversationService.GroupAction.SEND);
@@ -201,7 +233,16 @@ public class MessageService {
             message.setReplyToPreview(snippet(target));
         }
 
-        Message saved = messageRepository.save(message);
+        Message saved;
+        try {
+            saved = messageRepository.save(message);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            MessageResponse raced = findExistingByClientMessageId(senderId, request.getClientMessageId());
+            if (raced != null) {
+                return raced;
+            }
+            throw e;
+        }
 
         MessageResponse response = mapToResponse(saved);
         response.setConversationId(conversationId);
@@ -260,6 +301,52 @@ public class MessageService {
             attachReactions(r, byMessage.getOrDefault(m.getId(), List.of()), userId);
             return r;
         });
+    }
+
+    /**
+     * Phase 4: incremental catch-up for a conversation the client already has
+     * locally cached (DIRECT or GROUP - both carry a real conversationId via
+     * G0). {@code cursor} is the highest message id the client last fetched;
+     * null/0 means "never synced before" and is rejected (400) since dumping
+     * full history through this path defeats the point of a delta endpoint -
+     * the client should use the regular paginated history endpoint for that
+     * one-time backfill instead, then start sync from the id it saw there.
+     *
+     * Advances the caller's own {@code ConversationMember.lastSyncCursor} to
+     * the highest id actually returned, NOT to "now" - if the page was capped
+     * by {@code limit} (hasMore=true), the client is expected to call again
+     * immediately with the returned cursor rather than the gap being silently
+     * skipped.
+     */
+    @Transactional
+    public ConversationSyncResponse syncConversation(Long conversationId, Long userId, Long cursor, int limit) {
+        conversationService.assertMember(conversationId, userId);
+        if (cursor == null || cursor <= 0) {
+            throw new IllegalArgumentException("cursor is required - use the paginated history endpoint for the initial load");
+        }
+
+        int pageSize = Math.min(Math.max(limit, 1), 200);
+        Page<Message> page = messageRepository.findByConversationIdAndIdGreaterThanOrderByIdAsc(
+                conversationId, cursor, org.springframework.data.domain.PageRequest.of(0, pageSize));
+
+        List<Message> content = page.getContent();
+        Long newCursor = content.isEmpty() ? cursor : content.get(content.size() - 1).getId();
+
+        ConversationMember member = conversationMemberRepository
+                .findByConversationIdAndUserId(conversationId, userId)
+                .orElse(null);
+        if (member != null) {
+            member.setLastSyncCursor(newCursor);
+            member.setLastSyncAt(LocalDateTime.now(ZoneId.of("UTC")));
+            conversationMemberRepository.save(member);
+        }
+
+        List<MessageResponse> responses = content.stream().map(m -> {
+            MessageResponse r = mapToResponse(m);
+            r.setConversationId(conversationId);
+            return r;
+        }).collect(Collectors.toList());
+        return new ConversationSyncResponse(responses, newCursor, page.hasNext());
     }
 
     // ------------------------------------------------------------------
@@ -556,6 +643,7 @@ public class MessageService {
             Long unreadCount = messageRepository.countUnreadMessagesBetween(userId, partnerId);
 
             ConversationResponse conversation = new ConversationResponse();
+            conversation.setConversationId(lastMessage.getConversationId());
             conversation.setUserId(partnerId);
             conversation.setUsername(partner.getUsername());
             conversation.setFullName(partner.getFullName());
@@ -574,6 +662,16 @@ public class MessageService {
 
         conversations.sort((a, b) -> b.getLastMessageTime().compareTo(a.getLastMessageTime()));
         return conversations;
+    }
+
+    /** Phase 4: null clientMessageId means "not a retryable send" (e.g. group system messages) - never dedup those. */
+    private MessageResponse findExistingByClientMessageId(Long senderId, String clientMessageId) {
+        if (clientMessageId == null || clientMessageId.isBlank()) {
+            return null;
+        }
+        return messageRepository.findFirstBySenderIdAndClientMessageId(senderId, clientMessageId)
+                .map(this::mapToResponse)
+                .orElse(null);
     }
 
     private MessageResponse mapToResponse(Message message) {

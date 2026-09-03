@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:provider/provider.dart' as provider;
 import 'src/app.dart';
@@ -19,6 +20,7 @@ import 'src/state/missed_calls_store.dart';
 import 'src/database/database_helper.dart';
 import 'src/services/sqlite_persistence_helper.dart';
 import 'src/services/sqlite_loader_service.dart';
+import 'src/services/mobile_storage_gate.dart';
 
 /// App lifecycle observer to handle presence updates (PHASE 3 - NEW)
 class _AppLifecycleObserver extends WidgetsBindingObserver {
@@ -89,33 +91,60 @@ Future<void> _initializeAppInBackground(ChatStore chatStore) async {
           print('[BACKGROUND_INIT] ✅ WebSocket CONNECTED');
           
           chatStore.setUserOnline(userId, true);
-          
-          // Initialize SQLite persistence
+          chatStore.setCurrentUserId(userId);
+
+          // Local chat storage is Android/iOS only (spec: mobile local
+          // chat storage), not web — sqflite has no web implementation and
+          // previously this just threw MissingPluginException, silently
+          // caught by the try/catch below with no distinction from a real
+          // error. Explicit skip instead, so it's obvious in logs that web
+          // intentionally has no offline cache rather than a broken one.
+          if (kIsWeb) {
+            print('[BACKGROUND_INIT] ℹ️ Skipping local SQLite chat storage on web (mobile-only by design)');
+          } else {
+            // Phase 3: this is a resumed session (app cold-start with an
+            // existing token), not an interactive login, so the check must
+            // stay silent — no conflict dialog here (spec §18: don't
+            // intrusively prompt on every launch). If another device has
+            // since taken over ownership, silentCheck() already clears any
+            // stale local data; we just skip re-initializing/loading it.
+            final isStorageOwner = await MobileStorageGate.silentCheck();
+            if (isStorageOwner == false) {
+              print('[BACKGROUND_INIT] ℹ️ Skipping local SQLite chat storage — another device owns it');
+            } else {
+              try {
+                print('[BACKGROUND_INIT] 🗄️  Initializing SQLite...');
+                final dbHelper = DatabaseHelper();
+                await dbHelper.database;
+
+                final persistenceHelper = SQLitePersistenceHelper();
+                persistenceHelper.attachToChatService(
+                  wsService.messageStream,
+                  wsService.readReceiptStream,
+                );
+
+                print('[BACKGROUND_INIT] 📂 Loading chat data from SQLite...');
+                final loaderService = SQLiteLoaderService();
+                await loaderService.loadChatDataFromSQLite(chatStore, userId);
+                print('[BACKGROUND_INIT] ✅ Chat data loaded (${chatStore.allConversations.length} conversations)');
+              } catch (e) {
+                print('[BACKGROUND_INIT] ⚠️ SQLite error: $e');
+              }
+            }
+          }
+
+          // Offline message queue: on mobile this also reloads any
+          // still-pending messages from SQLite; on web it simply runs
+          // in-memory for the current session (no persistent offline queue
+          // across reloads, consistent with local storage being mobile-only).
           try {
-            print('[BACKGROUND_INIT] 🗄️  Initializing SQLite...');
-            final dbHelper = DatabaseHelper();
-            await dbHelper.database;
-            
-            chatStore.setCurrentUserId(userId);
-            
-            final persistenceHelper = SQLitePersistenceHelper();
-            persistenceHelper.attachToChatService(
-              wsService.messageStream,
-              wsService.readReceiptStream,
-            );
-            
-            print('[BACKGROUND_INIT] 📂 Loading chat data from SQLite...');
-            final loaderService = SQLiteLoaderService();
-            await loaderService.loadChatDataFromSQLite(chatStore, userId);
-            print('[BACKGROUND_INIT] ✅ Chat data loaded (${chatStore.allConversations.length} conversations)');
-            
             print('[BACKGROUND_INIT] 📋 Initializing message queue...');
             final messageQueueService = MessageQueueService();
             final connectivityService = ConnectivityService();
             await messageQueueService.initialize(wsService, connectivityService);
             print('[BACKGROUND_INIT] ✅ Message queue initialized');
           } catch (e) {
-            print('[BACKGROUND_INIT] ⚠️ SQLite error: $e');
+            print('[BACKGROUND_INIT] ⚠️ Message queue error: $e');
           }
           
           try {

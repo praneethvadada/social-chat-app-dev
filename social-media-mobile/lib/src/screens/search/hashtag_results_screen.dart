@@ -3,6 +3,7 @@ import '../../components/post_card.dart';
 import '../../models/post.dart';
 import '../../services/api_service.dart';
 import '../../theme/colors.dart';
+import '../../responsive/desktop_content_wrapper.dart';
 
 /// All public posts carrying a given #hashtag — reached by tapping a
 /// hashtag anywhere in the app (post text, Discover's trending topics).
@@ -28,6 +29,8 @@ class _HashtagResultsScreenState extends State<HashtagResultsScreen> {
     final theme = Theme.of(context);
     return Scaffold(
       body: SafeArea(
+        child: DesktopContentWrapper(
+        maxWidth: 640,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -95,6 +98,7 @@ class _HashtagResultsScreenState extends State<HashtagResultsScreen> {
               ),
             ),
           ],
+        ),
         ),
       ),
     );

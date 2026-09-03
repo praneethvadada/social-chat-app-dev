@@ -6,6 +6,7 @@ import '../../services/post_interaction_service.dart';
 import '../../services/api_service.dart';
 import '../../services/user_profile_cache.dart';
 import '../../components/mentionable_text.dart';
+import '../../responsive/desktop_content_wrapper.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
 class CommentsScreen extends StatefulWidget {
@@ -153,7 +154,9 @@ class _CommentsScreenState extends State<CommentsScreen> {
         title: const Text('Comments'),
         elevation: 0,
       ),
-      body: _isLoading
+      body: DesktopContentWrapper(
+        maxWidth: 640,
+        child: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
@@ -272,6 +275,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
                 ),
               ],
             ),
+      ),
     );
   }
 }

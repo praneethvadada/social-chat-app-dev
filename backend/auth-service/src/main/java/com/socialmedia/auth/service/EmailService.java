@@ -1,13 +1,20 @@
 package com.socialmedia.auth.service;
 
+import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Service
 public class EmailService {
@@ -106,39 +113,11 @@ public class EmailService {
         }
     }
     
-    @Async
-    public void sendPasswordChangedEmail(String toEmail, String username) {
-        if (!mailEnabled) {
-            log.info("Mail disabled; skipping password changed email to {}", toEmail);
-            return;
-        }
-        try {
-            SimpleMailMessage message = new SimpleMailMessage();
-            message.setFrom(fromEmail);
-            message.setTo(toEmail);
-            message.setSubject("Password Changed - Social Media App");
-            
-            message.setText(String.format("""
-                Hi %s,
-                
-                Your password has been successfully changed.
-                
-                If you made this change, you can safely ignore this email.
-                
-                If you didn't change your password, please contact our support team immediately at support@socialmedia.com
-                
-                Best regards,
-                Social Media Team
-                """, username));
-            
-            mailSender.send(message);
-            log.info("Password changed notification sent to: {}", toEmail);
-            
-        } catch (Exception e) {
-            log.error("Failed to send password changed email to: {}", toEmail, e);
-        }
-    }
-    
+    // sendPasswordChangedEmail (plain-text) removed in Phase 9 — its one
+    // caller (AuthService.resetPasswordWithEmail) now gets an HTML alert
+    // automatically via SecurityEventService.record(), which would have
+    // meant emailing the user twice for one password reset otherwise.
+
     @Async
     public void sendNewFollowerNotification(String toEmail, String username, String followerUsername) {
         if (!mailEnabled) {
@@ -312,9 +291,108 @@ public class EmailService {
             
             mailSender.send(message);
             log.info("Password reset OTP notification sent to: {}", toEmail);
-            
+
         } catch (Exception e) {
             log.error("Failed to send password reset OTP email to: {}", toEmail, e);
         }
+    }
+
+    /**
+     * Phase 9: every security-sensitive account change (spec §29's list —
+     * new device, password/email/phone changed, 2FA enable/disable/method
+     * change, device logged out, new web session, chat-storage device
+     * changed) gets an HTML alert through this ONE method, called from
+     * SecurityEventService.record() rather than scattered across each
+     * individual flow — every prior email in this class is plain
+     * SimpleMailMessage text; this is the first HTML one, per the user's
+     * own confirmed preference (architecture plan Q6: "Good Email HTML
+     * template only"). No new template-engine dependency — inline HTML +
+     * CSS in a Java text block, matching this class's existing house style
+     * of building message bodies directly rather than introducing
+     * Thymeleaf/FreeMarker for a handful of templates.
+     *
+     * @param details ordered key/value pairs shown as a table (device,
+     *                platform, time, etc.) — omit anything not relevant to
+     *                this particular event rather than padding with nulls.
+     */
+    @Async
+    public void sendSecurityAlertEmail(String toEmail, String username, String title, String message, Map<String, String> details) {
+        if (!mailEnabled) {
+            log.info("Mail disabled; skipping security alert '{}' to {}", title, toEmail);
+            return;
+        }
+        try {
+            MimeMessage mimeMessage = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, false, "UTF-8");
+            helper.setFrom(fromEmail);
+            helper.setTo(toEmail);
+            helper.setSubject(title + " - Social Chat App");
+            helper.setText(buildSecurityAlertHtml(username, title, message, details), true);
+
+            mailSender.send(mimeMessage);
+            log.info("Security alert '{}' sent to: {}", title, toEmail);
+        } catch (Exception e) {
+            log.error("Failed to send security alert '{}' to: {}", title, toEmail, e);
+        }
+    }
+
+    // Package-private (not private) so EmailServiceHtmlTest can verify the
+    // generated markup directly instead of only exercising this indirectly
+    // through a real SMTP send.
+    String buildSecurityAlertHtml(String username, String title, String message, Map<String, String> details) {
+        String safeUsername = escapeHtml(username == null ? "there" : username);
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("MMM d, yyyy 'at' h:mm a")) + " UTC";
+
+        Map<String, String> rows = new LinkedHashMap<>();
+        rows.put("Time", timestamp);
+        if (details != null) rows.putAll(details);
+
+        StringBuilder detailRows = new StringBuilder();
+        for (Map.Entry<String, String> entry : rows.entrySet()) {
+            if (entry.getValue() == null || entry.getValue().isBlank()) continue;
+            detailRows.append("""
+                <tr>
+                  <td style="padding:6px 0;color:#6b7280;font-size:13px;width:110px;">%s</td>
+                  <td style="padding:6px 0;color:#111827;font-size:13px;font-weight:600;">%s</td>
+                </tr>
+                """.formatted(escapeHtml(entry.getKey()), escapeHtml(entry.getValue())));
+        }
+
+        return """
+            <!DOCTYPE html>
+            <html>
+            <body style="margin:0;padding:24px;background:#f3f4f6;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+              <table role="presentation" width="100%%" style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+                <tr>
+                  <td style="background:#059669;padding:22px 24px;">
+                    <span style="color:#ffffff;font-size:18px;font-weight:700;">Social Chat</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:28px 24px 8px 24px;">
+                    <h1 style="margin:0 0 12px 0;color:#111827;font-size:19px;">%s</h1>
+                    <p style="margin:0 0 18px 0;color:#374151;font-size:14px;line-height:1.6;">Hi %s,</p>
+                    <p style="margin:0 0 18px 0;color:#374151;font-size:14px;line-height:1.6;">%s</p>
+                    <table role="presentation" width="100%%" style="border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;margin:0 0 18px 0;">
+                      %s
+                    </table>
+                    <p style="margin:0;color:#6b7280;font-size:13px;line-height:1.6;">If this wasn't you, secure your account now: change your password and review your active sessions under Settings → Security.</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="background:#f9fafb;padding:16px 24px;text-align:center;">
+                    <span style="color:#9ca3af;font-size:12px;">This is an automated security notice from Social Chat. Do not reply to this email.</span>
+                  </td>
+                </tr>
+              </table>
+            </body>
+            </html>
+            """.formatted(escapeHtml(title), safeUsername, escapeHtml(message), detailRows.toString());
+    }
+
+    String escapeHtml(String value) {
+        if (value == null) return "";
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&#39;");
     }
 }

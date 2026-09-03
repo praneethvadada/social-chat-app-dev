@@ -12,6 +12,11 @@ void _mlog(String message) {
 enum MessageStatus {
   sending,    // ⏱ Pending (not yet acknowledged by server)
   sent,       // ✓ Single tick - Server acknowledged receipt
+  // Reserved for Phase 4 (chat sync): the server doesn't emit a distinct
+  // "delivered to recipient's device" signal yet (only is_read/read_at
+  // exist), so this is schema/model-ready but rendered identically to
+  // `sent` in the UI for now — see message_status_indicator.dart.
+  delivered,  // ✓ Recipient's device received it, not yet read
   read,       // ✓✓ Double ticks - Read by recipient (when chat window is open)
   uploading,  // 🔼 Uploading media
   failed      // ❌ Send failed / timed out - needs retry
@@ -181,6 +186,9 @@ class Message {
       } else if (statusField == 'read') {
         status = MessageStatus.read;
         _mlog('[MESSAGE] 📖 Status: READ (from backend)');
+      } else if (statusField == 'delivered') {
+        status = MessageStatus.delivered;
+        _mlog('[MESSAGE] ✓ Status: DELIVERED (from backend)');
       } else if (statusField == 'uploading') {
         status = MessageStatus.uploading;
         _mlog('[MESSAGE] 🔼 Status: UPLOADING (local)');
@@ -305,6 +313,11 @@ class Conversation {
   final DateTime? lastMessageTime;
   final int unreadCount;
   final bool isOnline;
+  /// Phase 4: the DIRECT conversation's real backend id, used as the key for
+  /// incremental sync (/conversations/{id}/sync). Null on legacy rows that
+  /// predate G0's conversationId stamping - those fall back to a one-off
+  /// full-history fetch instead of an incremental sync.
+  final int? conversationId;
 
   Conversation({
     required this.userId,
@@ -315,6 +328,7 @@ class Conversation {
     this.lastMessageTime,
     required this.unreadCount,
     required this.isOnline,
+    this.conversationId,
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
@@ -329,6 +343,7 @@ class Conversation {
           : null,
       unreadCount: json['unreadCount'] as int? ?? 0,
       isOnline: json['isOnline'] as bool? ?? false,
+      conversationId: json['conversationId'] as int?,
     );
   }
 
@@ -350,6 +365,29 @@ class Conversation {
 
     // ✅ Use the utility function for consistent formatting
     return formatTimeAgo(diff);
+  }
+}
+
+/// Phase 4: one page of a conversation's incremental sync delta.
+/// Mirrors the backend's ConversationSyncResponse.
+class ConversationSyncResult {
+  final List<Message> messages;
+  final int nextCursor;
+  final bool hasMore;
+
+  const ConversationSyncResult({
+    required this.messages,
+    required this.nextCursor,
+    required this.hasMore,
+  });
+
+  factory ConversationSyncResult.fromJson(Map<String, dynamic> json) {
+    final list = json['messages'] as List? ?? [];
+    return ConversationSyncResult(
+      messages: list.map((e) => Message.fromJson(e as Map<String, dynamic>)).toList(),
+      nextCursor: json['nextCursor'] as int? ?? 0,
+      hasMore: json['hasMore'] as bool? ?? false,
+    );
   }
 }
 

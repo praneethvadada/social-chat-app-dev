@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/message.dart';
 import '../services/chat_websocket_service.dart';
-import '../services/message_persistence_service.dart';
 import '../database/local_chat_repository.dart';  // ✅ NEW: For SQLite updates
 
 /// Global reactive state store for chat messages, presence, and typing indicators.
@@ -26,9 +25,6 @@ class ChatStore extends ChangeNotifier {
   // ✅ NEW: Cache of unread counts per conversation (for fast badge display)
   final Map<int, int> _unreadCountCache = {};
 
-  // ✅ NEW: Persistence service
-  final MessagePersistenceService _persistence = MessagePersistenceService();
-  
   // ✅ NEW: SQLite repository for durable persistence
   final LocalChatRepository _localRepo = LocalChatRepository();
 
@@ -71,38 +67,13 @@ class ChatStore extends ChangeNotifier {
     _currentUserId = id;
   }
 
-  /// ✅ NEW: Load cached messages from persistence layer
-  Future<void> loadCachedMessagesForUser(int otherUserId) async {
-    try {
-      if (_currentUserId == null) {
-        print('[CHATSTORE] Cannot load cached messages without currentUserId');
-        return;
-      }
-
-      final cached = await _persistence.getMessagesForUser(otherUserId, _currentUserId!);
-      if (cached.isNotEmpty) {
-        _messagesByUser[otherUserId] = cached;
-        print('[CHATSTORE] ✅ Loaded ${cached.length} cached messages for user=$otherUserId');
-        notifyListeners();
-      }
-    } catch (e) {
-      print('[CHATSTORE] Error loading cached messages: $e');
-    }
-  }
-
-  /// ✅ NEW: Load all cached conversations
-  Future<void> loadAllCachedConversations() async {
-    try {
-      final conversationIds = await _persistence.getConversationList();
-      print('[CHATSTORE] Found ${conversationIds.length} cached conversations');
-      
-      for (final otherId in conversationIds) {
-        await loadCachedMessagesForUser(otherId);
-      }
-    } catch (e) {
-      print('[CHATSTORE] Error loading cached conversations: $e');
-    }
-  }
+  // loadCachedMessagesForUser/loadAllCachedConversations (SharedPreferences-
+  // backed) removed during Phase 2's local-database consolidation — bulk
+  // startup load is SQLiteLoaderService's job (already runs before the UI
+  // needs this data), and reloading per-conversation from a second, looser
+  // cache on every chat-open risked silently overwriting already-correct
+  // in-memory state (e.g. read status) with stale data. See
+  // local_chat_repository.dart for the single remaining local store.
 
   bool _sameMessage(Message a, Message b) {
     // Prefer clientMessageId for reconciliation
@@ -244,10 +215,11 @@ class ChatStore extends ChangeNotifier {
     // Do not mutate read state here. The UI (ChatDetailScreen) is responsible
     // for calling `markMessagesRead` when the conversation becomes visible.
 
-    // ✅ NEW: Persist message to local storage
-    _persistence.saveMessage(incoming, otherUserId).catchError((e) {
-      print('[CHATSTORE] Failed to persist message: $e');
-    });
+    // Local persistence for this message happens via SQLitePersistenceHelper,
+    // which listens to the same WebSocket stream independently (see
+    // main.dart) — no separate write needed here. (Removed a redundant
+    // SharedPreferences-backed cache during Phase 2's local-database
+    // consolidation; see local_chat_repository.dart.)
 
     // ✅ SMART: Auto-read receipt ONLY if chat is ALREADY active
     // If user is actively viewing ChatDetailScreen and new message arrives, mark as read immediately
@@ -385,9 +357,10 @@ class ChatStore extends ChangeNotifier {
         print('[CHATSTORE] ✅ Updated message status: $oldStatus → $newStatus');
         print('[CHATSTORE]    └─ clientId: $clientMessageId');
         
-        // ✅ NEW: Also update the database so status persists
-        _persistence.saveMessage(messages[i], otherUserId);
-        
+        // SQLite is updated independently by MessageQueueService, which
+        // listens to the same underlying message-ack/read-receipt streams
+        // (see message_queue_service.dart's _updateMessageStatus).
+
         notifyListeners();
         return;
       }
@@ -442,11 +415,8 @@ class ChatStore extends ChangeNotifier {
         markedMessageIds.add(m.id);
         print('[CHATSTORE] 📖 Marking message as read: id=${m.id}, senderId=${m.senderId}, recipientId=${m.recipientId}');
         final updatedMsg = m.copyWith(isRead: true, readAt: now, status: MessageStatus.read);
-        
-        // ✅ Save to SharedPreferences
-        _persistence.saveMessage(updatedMsg, otherUserId);
-        
-        // ✅ CRITICAL: Also update SQLite and COLLECT the Future to await later
+
+        // ✅ CRITICAL: Update SQLite and COLLECT the Future to await later
         if (m.id != 0) {
           sqliteUpdateFutures.add(
             _localRepo.updateMessageReadStatus(m.id, now.millisecondsSinceEpoch)
@@ -546,10 +516,10 @@ class ChatStore extends ChangeNotifier {
         markedCount++;
         print('[CHATSTORE] ✅✅ Marking as READ (double tick): id=${m.id}, content="${m.content.substring(0, m.content.length > 20 ? 20 : m.content.length)}..."');
         final updatedMsg = m.copyWith(isRead: true, readAt: now, status: MessageStatus.read);
-        
-        // ✅ NEW: Save to database so status persists
-        _persistence.saveMessage(updatedMsg, otherUserId);
-        
+
+        // SQLite is updated independently via SQLitePersistenceHelper's own
+        // readReceiptStream listener (see main.dart).
+
         return updatedMsg;
       }
       return m;

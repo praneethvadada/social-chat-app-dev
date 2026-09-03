@@ -11,6 +11,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ConversationResponse {
+    /** Phase 4: the DIRECT conversation's real id, for /conversations/{id}/sync. Null on legacy rows predating G0. */
+    private Long conversationId;
     private Long userId;
     private String username;
     private String fullName;

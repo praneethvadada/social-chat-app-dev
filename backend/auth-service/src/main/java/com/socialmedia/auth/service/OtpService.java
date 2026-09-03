@@ -1,6 +1,7 @@
 package com.socialmedia.auth.service;
 
 import com.socialmedia.auth.entity.OtpVerification;
+import com.socialmedia.auth.entity.OtpVerification.Purpose;
 import com.socialmedia.auth.repository.OtpVerificationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +17,9 @@ public class OtpService {
     private static final int OTP_LENGTH = 4;
     private static final int OTP_VALIDITY_MINUTES = 10;
     private static final int MAX_ATTEMPTS = 5;
+    // Phase 10 hardening: guess-attempt cap for verifyOtp(), distinct from
+    // MAX_ATTEMPTS above (which only ever gated /resend-otp call count).
+    private static final int MAX_VERIFY_ATTEMPTS = 5;
     private static final int VERIFICATION_PROOF_VALIDITY_MINUTES = 30;
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
@@ -30,44 +34,46 @@ public class OtpService {
     }
 
     /**
-     * Generate and send OTP to email
+     * Generate and send OTP to email for the given purpose. Phase 6: purpose-
+     * keyed (see OtpVerification's doc comment) — a signup-verification OTP
+     * and a 2FA OTP for the same email now live in separate rows instead of
+     * silently overwriting each other.
      */
-    public void sendOtp(String email) {
+    public void sendOtp(String email, Purpose purpose) {
         try {
-            // Generate 4-digit OTP
             String otp = generateOtp();
             LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(OTP_VALIDITY_MINUTES);
 
-            // Check if OTP already exists and delete it
-            Optional<OtpVerification> existingOtp = otpRepository.findByEmail(email);
+            // Check if OTP already exists for this (email, purpose) and delete it
+            Optional<OtpVerification> existingOtp = otpRepository.findByEmailAndPurpose(email, purpose.name());
             if (existingOtp.isPresent()) {
                 otpRepository.delete(existingOtp.get());
                 otpRepository.flush(); // Force delete to commit before insert
             }
 
             // Save new OTP — hashed, never plaintext
-            OtpVerification otpVerification = new OtpVerification(email, passwordEncoder.encode(otp), expiresAt);
+            OtpVerification otpVerification = new OtpVerification(email, purpose.name(), passwordEncoder.encode(otp), expiresAt);
             otpRepository.save(otpVerification);
 
             // Send OTP via email (plaintext, to the user only — never stored or logged)
             emailService.sendOtpEmail(email, otp);
 
-            log.info("OTP sent successfully to email: {}", email);
+            log.info("OTP sent successfully to email: {} (purpose={})", email, purpose);
         } catch (Exception e) {
-            log.error("Failed to send OTP to email: {}", email, e);
+            log.error("Failed to send OTP to email: {} (purpose={})", email, purpose, e);
             throw new RuntimeException("Failed to send OTP: " + e.getMessage());
         }
     }
 
     /**
-     * Verify OTP code
+     * Verify OTP code for the given purpose.
      */
-    public boolean verifyOtp(String email, String otp) {
+    public boolean verifyOtp(String email, String otp, Purpose purpose) {
         try {
-            Optional<OtpVerification> otpVerification = otpRepository.findByEmail(email);
+            Optional<OtpVerification> otpVerification = otpRepository.findByEmailAndPurpose(email, purpose.name());
 
             if (otpVerification.isEmpty()) {
-                log.warn("No OTP request found for email: {}", email);
+                log.warn("No OTP request found for email: {} (purpose={})", email, purpose);
                 return false;
             }
 
@@ -75,18 +81,30 @@ public class OtpService {
 
             // Check if OTP is already used
             if (verification.getIsUsed()) {
-                log.warn("OTP already used for email: {}", email);
+                log.warn("OTP already used for email: {} (purpose={})", email, purpose);
                 return false;
             }
 
             // Check if OTP is expired
             if (verification.isExpired()) {
-                log.warn("OTP expired for email: {}", email);
+                log.warn("OTP expired for email: {} (purpose={})", email, purpose);
+                return false;
+            }
+
+            // Phase 10 hardening: without this, a 4-digit OTP (10,000
+            // possibilities) had no server-side guess limit at all — see
+            // OtpVerification.verifyAttempts's doc comment for the severity
+            // (PASSWORD_RESET/TWO_FACTOR_AUTH/account-deletion are all
+            // brute-forceable within the 10-minute validity window otherwise).
+            if (verification.getVerifyAttempts() >= MAX_VERIFY_ATTEMPTS) {
+                log.warn("OTP verify-attempt limit exceeded for email: {} (purpose={})", email, purpose);
                 return false;
             }
 
             if (!passwordEncoder.matches(otp, verification.getOtpHash())) {
-                log.warn("OTP mismatch for email: {}", email);
+                verification.setVerifyAttempts(verification.getVerifyAttempts() + 1);
+                otpRepository.save(verification);
+                log.warn("OTP mismatch for email: {} (purpose={})", email, purpose);
                 return false;
             }
 
@@ -97,32 +115,29 @@ public class OtpService {
             verification.setVerifiedAt(LocalDateTime.now());
             otpRepository.save(verification);
 
-            log.info("OTP verified successfully for email: {}", email);
+            log.info("OTP verified successfully for email: {} (purpose={})", email, purpose);
             return true;
 
         } catch (Exception e) {
-            log.error("Error verifying OTP for email: {}", email, e);
+            log.error("Error verifying OTP for email: {} (purpose={})", email, purpose, e);
             throw new RuntimeException("OTP verification failed: " + e.getMessage());
         }
     }
 
     /**
-     * Resend OTP to email
+     * Resend OTP to email for the given purpose.
      */
-    public void resendOtp(String email) {
+    public void resendOtp(String email, Purpose purpose) {
         try {
-            // Get existing OTP
-            Optional<OtpVerification> existingOtp = otpRepository.findByEmail(email);
+            Optional<OtpVerification> existingOtp = otpRepository.findByEmailAndPurpose(email, purpose.name());
 
             if (existingOtp.isPresent()) {
                 OtpVerification verification = existingOtp.get();
 
-                // Check attempts
                 if (verification.getAttempts() >= MAX_ATTEMPTS) {
                     throw new RuntimeException("Maximum resend attempts exceeded. Please try again later.");
                 }
 
-                // Generate new OTP
                 String newOtp = generateOtp();
                 LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(OTP_VALIDITY_MINUTES);
 
@@ -130,49 +145,29 @@ public class OtpService {
                 verification.setExpiresAt(expiresAt);
                 verification.setIsUsed(false);
                 verification.setAttempts(verification.getAttempts() + 1);
+                verification.setVerifyAttempts(0); // fresh code, fresh guess budget
                 verification.setCreatedAt(LocalDateTime.now());
 
                 otpRepository.save(verification);
                 emailService.sendOtpEmail(email, newOtp);
 
-                log.info("OTP resent successfully to email: {}", email);
+                log.info("OTP resent successfully to email: {} (purpose={})", email, purpose);
             } else {
                 throw new RuntimeException("No OTP request found for this email");
             }
         } catch (Exception e) {
-            log.error("Failed to resend OTP to email: {}", email, e);
+            log.error("Failed to resend OTP to email: {} (purpose={})", email, purpose, e);
             throw new RuntimeException("Failed to resend OTP: " + e.getMessage());
         }
     }
 
     /**
-     * Send OTP for password reset
+     * Send OTP for password reset. Thin convenience wrapper so existing
+     * callers (AuthService.sendPasswordResetOtp) don't need to know about
+     * the Purpose enum directly.
      */
     public void sendPasswordResetOtp(String email) {
-        try {
-            // Generate 4-digit OTP
-            String otp = generateOtp();
-            LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(OTP_VALIDITY_MINUTES);
-
-            // Check if OTP already exists and delete it
-            Optional<OtpVerification> existingOtp = otpRepository.findByEmail(email);
-            if (existingOtp.isPresent()) {
-                otpRepository.delete(existingOtp.get());
-                otpRepository.flush(); // Force delete to commit before insert
-            }
-
-            // Save new OTP
-            OtpVerification otpVerification = new OtpVerification(email, passwordEncoder.encode(otp), expiresAt);
-            otpRepository.save(otpVerification);
-
-            // Send OTP via email with password reset context
-            emailService.sendOtpEmail(email, otp);
-
-            log.info("Password reset OTP sent successfully to email: {}", email);
-        } catch (Exception e) {
-            log.error("Failed to send password reset OTP to email: {}", email, e);
-            throw new RuntimeException("Failed to send password reset OTP: " + e.getMessage());
-        }
+        sendOtp(email, Purpose.PASSWORD_RESET);
     }
 
     /**
@@ -181,8 +176,8 @@ public class OtpService {
      * the account, instead of trusting the client to have called
      * verify-otp first — nothing previously enforced that server-side.
      */
-    public boolean hasRecentVerification(String email) {
-        return otpRepository.findByEmail(email)
+    public boolean hasRecentVerification(String email, Purpose purpose) {
+        return otpRepository.findByEmailAndPurpose(email, purpose.name())
                 .filter(OtpVerification::getIsUsed)
                 .map(v -> v.getVerifiedAt() != null && v.getVerifiedAt().isAfter(LocalDateTime.now().minusMinutes(VERIFICATION_PROOF_VALIDITY_MINUTES)))
                 .orElse(false);

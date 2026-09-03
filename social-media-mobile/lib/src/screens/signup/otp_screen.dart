@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../components/app_logo.dart';
 import '../../components/primary_button.dart';
 import '../../services/api_service.dart';
 import '../../services/call_signaling_service.dart';
+import '../../services/mobile_storage_gate.dart';
 import '../../state/app_state_manager.dart';
 import '../../theme/colors.dart';
+import '../../theme/theme_provider.dart';
 import '../../services/firebase_messaging_service.dart';
 
 class OtpScreen extends ConsumerStatefulWidget {
@@ -148,6 +151,29 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
             print('[OTP] ⚠️ Token sync failed (non-critical): $e');
           }
 
+          // Brand-new account -> no saved theme preference yet, so this
+          // applies Light Mode (and overwrites the pre-home mirror in case
+          // a different previous user on this device had set Dark Mode).
+          try {
+            final newUserId = await ApiService.getUserId();
+            if (newUserId != null) {
+              await ref.read(themeModeProvider.notifier).applyUserPreferenceOnLogin(newUserId);
+            }
+          } catch (e) {
+            print('[OTP] ⚠️ Failed to apply per-user theme: $e');
+          }
+
+          // Phase 3: brand-new account, so nobody could already own local
+          // chat storage — this device just becomes the first (and only)
+          // owner, no conflict prompt possible. Mobile only.
+          if (!kIsWeb) {
+            try {
+              await MobileStorageGate.checkOnLogin();
+            } catch (e) {
+              print('[OTP] ⚠️ Mobile storage claim failed: $e');
+            }
+          }
+
           // Navigate to authenticated state and home page
           if (mounted) {
             ref.read(appStateProvider.notifier).goToAuthenticated();
@@ -229,9 +255,10 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
     final width = MediaQuery.of(context).size.width;
     final contentWidth = width > 520 ? 520.0 : width * 0.94;
     final destination = widget.isPhone ? widget.phoneNumber! : widget.email!;
+    final themed = ThemedColors.of(context);
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      // No explicit backgroundColor — see login_screen.dart for why.
       body: SafeArea(
         child: RepaintBoundary(
           child: Center(
@@ -260,7 +287,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
                               .headlineSmall
                               ?.copyWith(
                                 fontWeight: FontWeight.w700,
-                                color: AppColors.text,
+                                color: themed.text,
                               ),
                         ),
                         const SizedBox(height: 12),
@@ -271,7 +298,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
                               .textTheme
                               .bodyMedium
                               ?.copyWith(
-                                color: AppColors.muted,
+                                color: themed.muted,
                               ),
                         ),
                         const SizedBox(height: 32),
@@ -301,7 +328,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
                                       .headlineSmall
                                       ?.copyWith(
                                         fontWeight: FontWeight.w700,
-                                        color: AppColors.text,
+                                        color: themed.text,
                                       ),
                                   decoration: InputDecoration(
                                     counterText: '',
@@ -312,7 +339,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
                                     border: OutlineInputBorder(
                                       borderRadius: BorderRadius.circular(12),
                                       borderSide: BorderSide(
-                                        color: AppColors.muted.withValues(alpha: 0.3),
+                                        color: themed.muted.withValues(alpha: 0.3),
                                         width: 2,
                                       ),
                                     ),
@@ -324,7 +351,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
                                       ),
                                     ),
                                     filled: true,
-                                    fillColor: AppColors.background,
+                                    fillColor: themed.background,
                                   ),
                                 ),
                               ),
@@ -355,7 +382,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
                                   .bodySmall
                                   ?.copyWith(
                                     color: _isResendingOtp
-                                        ? AppColors.muted
+                                        ? themed.muted
                                         : AppColors.primary,
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -369,7 +396,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen>
                                 .textTheme
                                 .bodySmall
                                 ?.copyWith(
-                                  color: AppColors.muted,
+                                  color: themed.muted,
                                 ),
                           ),
                       ],

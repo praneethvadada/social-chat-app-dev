@@ -15,6 +15,9 @@ public class SecurityConfig {
     @org.springframework.beans.factory.annotation.Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private InternalServiceAuthFilter internalServiceAuthFilter;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -35,6 +38,14 @@ public class SecurityConfig {
                     response.sendError(401, "Unauthorized: " + authException.getMessage());
                 })
             )
+            // Phase 10 hardening: rejects any caller of /internal/relay/**
+            // without the shared internal-service secret. Anchored to
+            // UsernamePasswordAuthenticationFilter, not
+            // JwtAuthenticationFilter.class - addFilterBefore can only order
+            // relative to filters Spring Security's own ordering table
+            // knows about (see auth-service's identical SecurityConfig for
+            // the full explanation of this gotcha).
+            .addFilterBefore(internalServiceAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

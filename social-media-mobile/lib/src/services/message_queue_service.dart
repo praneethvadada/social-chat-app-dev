@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import '../database/local_chat_repository.dart';
 import '../database/database_helper.dart';
 import '../models/message.dart';
@@ -105,8 +106,11 @@ class MessageQueueService {
     print('[MessageQueue] ➕ Queueing message: clientId=$clientMessageId');
     
     _pendingMessages[clientMessageId] = (receiverId, content);
-    
-    // Save to SQLite with PENDING status
+
+    // 'SENDING' (not 'PENDING') — matches the literal every other write
+    // path in the app uses for "not yet acknowledged by server", so a
+    // reload correctly recognizes this as still-in-flight. See
+    // sqlite_loader_service.dart's _stringToMessageStatus doc comment.
     final message = SQLiteMessage(
       clientMessageId: clientMessageId,
       chatId: chatId,
@@ -114,7 +118,7 @@ class MessageQueueService {
       receiverId: receiverId,
       content: content,
       createdAt: createdAt.millisecondsSinceEpoch,
-      status: 'PENDING',
+      status: 'SENDING',
     );
     
     await _localRepo.insertMessage(message);
@@ -196,15 +200,21 @@ class MessageQueueService {
     }
   }
   
-  /// Load pending messages from SQLite on app startup
+  /// Load pending messages from SQLite on app startup. No-op on web — local
+  /// chat storage is mobile-only (sqflite has no web backend); the queue
+  /// still works there, just in-memory for the current session only.
   Future<void> _loadPendingMessages() async {
+    if (kIsWeb) {
+      print('[MessageQueue] Skipping SQLite pending-message reload on web (mobile-only local storage)');
+      return;
+    }
     try {
       final db = await _dbHelper.database;
       
       final maps = await db.query(
         'messages',
         where: 'status = ?',
-        whereArgs: ['PENDING'],
+        whereArgs: ['SENDING'],
       );
       
       for (final map in maps) {

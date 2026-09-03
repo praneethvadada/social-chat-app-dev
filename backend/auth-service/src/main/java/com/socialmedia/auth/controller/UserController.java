@@ -141,13 +141,25 @@ public class UserController {
 
             if (username != null && !username.trim().isEmpty()
                     && !username.equals(u.getUsername())) {
+                String trimmed = username.trim();
+                // Same character-set rule as registration (RegisterRequest's
+                // @Pattern) - this endpoint is a plain Map body, not a
+                // validated DTO, so it needs its own explicit check. Without
+                // it, editing a profile's username was a second way to land
+                // a space (or anything else) in a value used as a login
+                // identifier and in "/u/<username>" profile URLs.
+                if (!trimmed.matches("^[a-zA-Z0-9_.]+$")) {
+                    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                            .body(Map.<String, Object>of("error",
+                                    "Username can only contain letters, numbers, underscores, and periods — no spaces"));
+                }
                 // Username is unique across the system - reject collisions here,
                 // where the authoritative table lives.
-                if (userRepository.findByUsername(username.trim()).isPresent()) {
+                if (userRepository.findByUsername(trimmed).isPresent()) {
                     return ResponseEntity.status(HttpStatus.CONFLICT)
                             .body(Map.<String, Object>of("error", "Username already taken"));
                 }
-                u.setUsername(username.trim());
+                u.setUsername(trimmed);
             }
             if (fullName != null) {
                 u.setFullName(fullName);

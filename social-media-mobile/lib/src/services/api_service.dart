@@ -1,12 +1,19 @@
 // ...existing code...
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/post.dart';
 import '../config/api_config.dart';
 import '../models/message.dart';
-import 'message_persistence_service.dart';
+import '../models/device_session.dart';
+import '../models/mobile_storage_status.dart';
+import '../models/two_factor_status.dart';
+import '../models/security_event.dart';
+import '../database/database_helper.dart';
+import 'device_identity_service.dart';
 
 class ApiService {
   /// Delete a notification by its ID
@@ -56,9 +63,29 @@ class ApiService {
   static const String baseUrl = ApiConfig.baseUrl;
   static const String _tokenKey = 'accessToken';
   static const String _userIdKey = 'userId';
+  // Phase 10 hardening: the access token used to live in this same
+  // SharedPreferences store (a plaintext file, world-readable on a rooted
+  // device and trivially recoverable from an unencrypted backup) alongside
+  // display-only fields like username/email — those are fine there, a
+  // bearer token that grants full account access is not. Real security
+  // (Android Keystore / iOS Keychain, hardware-backed where available) only
+  // exists on mobile; flutter_secure_storage's web backend is just
+  // browser storage with a rotating unencrypted key, no more meaningfully
+  // secure than SharedPreferences was — so web keeps using SharedPreferences
+  // exactly as before (same kIsWeb-gated split already established for
+  // local SQLite chat storage in Phase 2, see main.dart/message_queue_service.dart).
+  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
   static const String _usernameKey = 'username';
   static const String _emailKey = 'email';
   static const String _fullNameKey = 'fullName';
+  /// Backend-assigned Device row id (distinct from DeviceIdentityService's
+  /// client-generated UUID string) — lets the client tell whether an
+  /// account-wide broadcast (session.revoked, local_storage.revoked) is
+  /// actually about THIS device, since those payloads carry this same
+  /// numeric id.
+  static const String _backendDeviceIdKey = 'backendDeviceId';
 
   static String _extractErrorMessage(http.Response response, String fallback) {
     try {
@@ -90,8 +117,27 @@ class ApiService {
   }
 
   static Future<String?> getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString(_tokenKey);
+    String? token;
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      token = prefs.getString(_tokenKey);
+    } else {
+      token = await _secureStorage.read(key: _tokenKey);
+      if (token == null) {
+        // One-time migration: a device that logged in before this change
+        // still has its token in plaintext SharedPreferences — read it once,
+        // move it into secure storage, and wipe the plaintext copy, instead
+        // of silently forcing everyone to log in again on upgrade.
+        final prefs = await SharedPreferences.getInstance();
+        final legacyToken = prefs.getString(_tokenKey);
+        if (legacyToken != null && legacyToken.isNotEmpty) {
+          print('[TOKEN MIGRATION] Moving token from SharedPreferences to secure storage');
+          await _secureStorage.write(key: _tokenKey, value: legacyToken);
+          await prefs.remove(_tokenKey);
+          token = legacyToken;
+        }
+      }
+    }
     if (token != null) {
       print('[TOKEN RETRIEVED] ${token.substring(0, min(20, token.length))}...');
     } else {
@@ -101,8 +147,19 @@ class ApiService {
   }
 
   static Future<void> setToken(String token) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_tokenKey, token);
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_tokenKey, token);
+    } else {
+      await _secureStorage.write(key: _tokenKey, value: token);
+      // Defensive cleanup: guarantees no stale plaintext copy lingers even
+      // if a prior version of the app (or a partially-completed migration)
+      // left one behind.
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.containsKey(_tokenKey)) {
+        await prefs.remove(_tokenKey);
+      }
+    }
   }
 
   static Future<int?> getUserId() async {
@@ -125,13 +182,24 @@ class ApiService {
     return prefs.getString(_fullNameKey);
   }
 
-  static Future<void> _setSession({required String token, required int userId, String? username, String? email, String? fullName}) async {
+  /// Null if this session predates device tracking, or deviceInfo wasn't sent.
+  static Future<int?> getBackendDeviceId() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_tokenKey, token);
+    return prefs.getInt(_backendDeviceIdKey);
+  }
+
+  static Future<void> _setSession({required String token, required int userId, String? username, String? email, String? fullName, int? backendDeviceId}) async {
+    await setToken(token);
+    final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_userIdKey, userId);
     if (username != null) await prefs.setString(_usernameKey, username);
     if (email != null) await prefs.setString(_emailKey, email);
     if (fullName != null) await prefs.setString(_fullNameKey, fullName);
+    if (backendDeviceId != null) {
+      await prefs.setInt(_backendDeviceIdKey, backendDeviceId);
+    } else {
+      await prefs.remove(_backendDeviceIdKey);
+    }
   }
   
   static Future<void> updateStoredProfile({String? username, String? fullName}) async {
@@ -143,11 +211,21 @@ class ApiService {
   static Future<void> clearSession() async {
     final prefs = await SharedPreferences.getInstance();
     final userId = await getUserId();
-    await prefs.remove(_tokenKey);
+    if (kIsWeb) {
+      await prefs.remove(_tokenKey);
+    } else {
+      await _secureStorage.delete(key: _tokenKey);
+      // Defensive: also clear the legacy plaintext key in case this device
+      // logged out before ever completing the one-time migration above.
+      if (prefs.containsKey(_tokenKey)) {
+        await prefs.remove(_tokenKey);
+      }
+    }
     await prefs.remove(_userIdKey);
     await prefs.remove(_usernameKey);
     await prefs.remove(_emailKey);
     await prefs.remove(_fullNameKey);
+    await prefs.remove(_backendDeviceIdKey);
     // Clear user-specific privacy settings
     if (userId != null) {
       await prefs.remove('isPrivate_$userId');
@@ -249,11 +327,209 @@ class ApiService {
     } catch (e) {
       print('[LOGOUT] Network error during logout: $e');
     } finally {
-      // Clear cached messages
-      await MessagePersistenceService().clearAll();
+      // Clear the local chat database so a previous account's messages
+      // never remain readable to whoever logs into this device next.
+      // (Previously this only cleared a since-removed SharedPreferences
+      // cache and never touched the actual SQLite chat database at all —
+      // a real cross-account data-leak gap on shared devices.)
+      try {
+        await DatabaseHelper().clearAll();
+      } catch (e) {
+        print('[LOGOUT] Failed to clear local chat database: $e');
+      }
       await clearSession();
       print('[LOGOUT] Local session and cached messages cleared');
     }
+  }
+
+  /// "Currently Logged-In Devices" — every device this account has ever
+  /// registered from, with its current session status folded in.
+  static Future<List<DeviceSession>> fetchDevices() async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.get(
+      Uri.parse('$baseUrl/auth/devices'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body) as List<dynamic>;
+      return data.map((e) => DeviceSession.fromJson(e as Map<String, dynamic>)).toList();
+    }
+    throw Exception(_extractErrorMessage(response, 'Failed to load devices'));
+  }
+
+  /// Logs a device out remotely — its current session stops working on its next request.
+  static Future<void> revokeDevice(int deviceId) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/devices/$deviceId/revoke'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(_extractErrorMessage(response, 'Failed to log out device'));
+    }
+  }
+
+  /// Phase 8: paginated, newest-first security audit trail for this account.
+  static Future<List<SecurityEvent>> getSecurityEvents({int page = 0, int size = 20}) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.get(
+      Uri.parse('$baseUrl/auth/security/events?page=$page&size=$size'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final content = data is Map && data.containsKey('content') ? data['content'] as List : (data as List);
+      return content.map((e) => SecurityEvent.fromJson(e as Map<String, dynamic>)).toList();
+    }
+    throw Exception(_extractErrorMessage(response, 'Failed to load security activity'));
+  }
+
+  /// Phase 6: 2FA configuration status — enabled/method, plus which methods
+  /// are even available (a verified email/phone on the account).
+  static Future<TwoFactorStatus> getTwoFactorStatus() async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.get(
+      Uri.parse('$baseUrl/auth/security/2fa'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode == 200) {
+      return TwoFactorStatus.fromJson(json.decode(response.body) as Map<String, dynamic>);
+    }
+    throw Exception(_extractErrorMessage(response, 'Failed to load 2FA status'));
+  }
+
+  /// Sends an OTP to the account's already-verified phone/email, proving
+  /// control before enabling/switching 2FA onto it. [method] is "PHONE" or "EMAIL".
+  static Future<void> sendTwoFactorOtp(String method) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/security/2fa/send-otp'),
+      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      body: json.encode({'method': method}),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(_extractErrorMessage(response, 'Failed to send OTP'));
+    }
+  }
+
+  /// Enables 2FA using [method], proven via the OTP from [sendTwoFactorOtp].
+  static Future<TwoFactorStatus> enableTwoFactor({required String method, required String otp}) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/security/2fa/enable'),
+      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      body: json.encode({'method': method, 'otp': otp}),
+    );
+
+    if (response.statusCode == 200) {
+      return TwoFactorStatus.fromJson(json.decode(response.body) as Map<String, dynamic>);
+    }
+    throw Exception(_extractErrorMessage(response, 'Failed to enable two-factor authentication'));
+  }
+
+  /// Switches the active 2FA method — same shape as [enableTwoFactor], distinct
+  /// endpoint so the server can log a METHOD_CHANGED event instead of ENABLED.
+  static Future<TwoFactorStatus> changeTwoFactorMethod({required String method, required String otp}) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/security/2fa/change-method'),
+      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      body: json.encode({'method': method, 'otp': otp}),
+    );
+
+    if (response.statusCode == 200) {
+      return TwoFactorStatus.fromJson(json.decode(response.body) as Map<String, dynamic>);
+    }
+    throw Exception(_extractErrorMessage(response, 'Failed to change two-factor method'));
+  }
+
+  /// Disables 2FA. Requires the current password, not an OTP (see backend's own reasoning).
+  static Future<void> disableTwoFactor(String password) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/security/2fa/disable'),
+      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      body: json.encode({'password': password}),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(_extractErrorMessage(response, 'Failed to disable two-factor authentication'));
+    }
+  }
+
+  /// Phase 3: whether THIS device currently owns local chat storage, and
+  /// which device does if not. Mobile-only on the backend (a WEB device's
+  /// claim/transfer calls 400 with MOBILE_ONLY_FEATURE) — callers should
+  /// guard with `!kIsWeb` before calling any of these three.
+  static Future<MobileStorageStatus> getMobileStorageStatus() async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.get(
+      Uri.parse('$baseUrl/auth/mobile-storage/status'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode == 200) {
+      return MobileStorageStatus.fromJson(json.decode(response.body) as Map<String, dynamic>);
+    }
+    throw Exception(_extractErrorMessage(response, 'Failed to check chat storage status'));
+  }
+
+  /// Claims ownership when nobody currently owns it yet. Idempotent if this
+  /// device is already the owner; does NOT take ownership from another
+  /// device — use [transferMobileStorage] for that.
+  static Future<MobileStorageStatus> claimMobileStorage() async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/mobile-storage/claim'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode == 200) {
+      return MobileStorageStatus.fromJson(json.decode(response.body) as Map<String, dynamic>);
+    }
+    throw Exception(_extractErrorMessage(response, 'Failed to claim chat storage'));
+  }
+
+  /// Explicitly takes ownership away from whichever device currently holds
+  /// it and grants it to this device.
+  static Future<MobileStorageStatus> transferMobileStorage() async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/mobile-storage/transfer'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode == 200) {
+      return MobileStorageStatus.fromJson(json.decode(response.body) as Map<String, dynamic>);
+    }
+    throw Exception(_extractErrorMessage(response, 'Failed to transfer chat storage'));
   }
 
   /// Clear FCM token on backend to stop push notifications after logout
@@ -679,12 +955,14 @@ class ApiService {
     final isEmail = trimmed.contains('@');
     final isPhoneLike = trimmed.startsWith('+');
 
+    final deviceInfo = await DeviceIdentityService.getDeviceInfoPayload();
     final response = await http.post(
       Uri.parse('$baseUrl/auth/login'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode({
         if (isEmail || isPhoneLike) 'identifier': trimmed else 'username': trimmed,
         'password': password,
+        'deviceInfo': deviceInfo,
       }),
     );
 
@@ -698,13 +976,14 @@ class ApiService {
       final username = data['username'];
       final userEmail = data['email'];
       final fullName = data['fullName'];
-      
+      final deviceId = data['deviceId'];
+
       print('\n[RESPONSE EXTRACTED]');
       print('userId: $userId');
       print('username: $username');
       print('email: $userEmail');
       print('fullName: $fullName');
-      
+
       if (accessToken != null && userId != null) {
         print('\n[STORING IN SHAREDPREFERENCES]');
         await _setSession(
@@ -713,6 +992,7 @@ class ApiService {
           username: username,
           email: userEmail,
           fullName: fullName,
+          backendDeviceId: deviceId == null ? null : (deviceId is int ? deviceId : int.parse(deviceId.toString())),
         );
         print('Stored successfully');
       }
@@ -723,6 +1003,86 @@ class ApiService {
           : 'Login failed (code ${response.statusCode})';
       final message = _extractErrorMessage(response, fallback);
       throw Exception(message);
+    }
+  }
+
+  /// Phase 7: completes a login that /login paused for a 2FA challenge
+  /// (see ApiService.login — a {twoFactorRequired:true, method,
+  /// challengeToken} response instead of tokens). On success this stores
+  /// the session exactly like a normal /login would.
+  static Future<Map<String, dynamic>> verifyTwoFactorLogin({
+    required String challengeToken,
+    required String otp,
+  }) async {
+    final deviceInfo = await DeviceIdentityService.getDeviceInfoPayload();
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/login/2fa/verify'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'challengeToken': challengeToken, 'otp': otp, 'deviceInfo': deviceInfo}),
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final accessToken = data['accessToken'];
+      final userId = data['userId'];
+      if (accessToken != null && userId != null) {
+        await _setSession(
+          token: accessToken,
+          userId: userId is int ? userId : int.parse(userId.toString()),
+          username: data['username'],
+          email: data['email'],
+          fullName: data['fullName'],
+          backendDeviceId: data['deviceId'] == null ? null : (data['deviceId'] is int ? data['deviceId'] : int.parse(data['deviceId'].toString())),
+        );
+      }
+      return data;
+    }
+    throw Exception(_extractErrorMessage(response, 'Invalid or expired code'));
+  }
+
+  /// Post-Phase-10: completes a login that /login (or /login/2fa/verify)
+  /// paused for a web-session-conflict challenge (a {webSessionConflict:true,
+  /// challengeToken, platform, osName, browserName, deviceModel} response
+  /// instead of tokens — the account is already active on a different web
+  /// device). Calling this logs that other device out and finishes login
+  /// here. deviceInfo must be the SAME device info the original login call
+  /// sent. On success this stores the session exactly like a normal login.
+  static Future<Map<String, dynamic>> confirmWebSessionTakeover(String challengeToken) async {
+    final deviceInfo = await DeviceIdentityService.getDeviceInfoPayload();
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/login/web-session/confirm'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'challengeToken': challengeToken, 'deviceInfo': deviceInfo}),
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final accessToken = data['accessToken'];
+      final userId = data['userId'];
+      if (accessToken != null && userId != null) {
+        await _setSession(
+          token: accessToken,
+          userId: userId is int ? userId : int.parse(userId.toString()),
+          username: data['username'],
+          email: data['email'],
+          fullName: data['fullName'],
+          backendDeviceId: data['deviceId'] == null ? null : (data['deviceId'] is int ? data['deviceId'] : int.parse(data['deviceId'].toString())),
+        );
+      }
+      return data;
+    }
+    throw Exception(_extractErrorMessage(response, 'Could not complete sign-in'));
+  }
+
+  /// Resends the OTP for an in-progress 2FA login challenge.
+  static Future<void> resendTwoFactorLoginOtp(String challengeToken) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/login/2fa/resend'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'challengeToken': challengeToken}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception(_extractErrorMessage(response, 'Failed to resend code'));
     }
   }
 
@@ -738,6 +1098,7 @@ class ApiService {
     String? phoneNumber,
   }) async {
     assert((email != null) != (phoneNumber != null), 'Provide exactly one of email or phoneNumber');
+    final deviceInfo = await DeviceIdentityService.getDeviceInfoPayload();
     final response = await http.post(
       Uri.parse('$baseUrl/auth/register'),
       headers: {'Content-Type': 'application/json'},
@@ -747,6 +1108,7 @@ class ApiService {
         if (phoneNumber != null) 'phoneNumber': phoneNumber,
         'password': password,
         'fullName': fullName,
+        'deviceInfo': deviceInfo,
       }),
     );
 
@@ -757,6 +1119,7 @@ class ApiService {
       final username = data['username'];
       final userEmail = data['email'];
       final userFullName = data['fullName'];
+      final deviceId = data['deviceId'];
       if (accessToken != null && userId != null) {
         await _setSession(
           token: accessToken,
@@ -764,6 +1127,7 @@ class ApiService {
           username: username,
           email: userEmail,
           fullName: userFullName,
+          backendDeviceId: deviceId == null ? null : (deviceId is int ? deviceId : int.parse(deviceId.toString())),
         );
       }
       return data;
@@ -865,6 +1229,37 @@ class ApiService {
       }
       final message = _extractErrorMessage(response, fallback);
       throw Exception(message);
+    }
+  }
+
+  /// Links a verified email to the authenticated account — adding a second
+  /// identifier after signup (the account already has a phone number; the
+  /// backend's XOR-at-signup rule only applies to registration itself, not
+  /// to this). Call sendOtp(email:) first to get a code emailed, then this
+  /// with that code. Requires a Bearer token — mirrors verifyPhoneOtp's
+  /// {success, message} return convention (not throwing) so both linking
+  /// flows can share identical error-handling in the calling UI.
+  static Future<Map<String, dynamic>> linkEmail({required String email, required String otp}) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/email/link'),
+      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      body: json.encode({'email': email, 'otp': otp}),
+    );
+
+    if (response.statusCode == 200) {
+      return {'success': true, ...json.decode(response.body) as Map<String, dynamic>};
+    } else {
+      String fallback = 'Failed to link email';
+      if (response.statusCode == 400) {
+        fallback = 'Invalid or expired code';
+      } else if (response.statusCode == 409) {
+        fallback = 'That email is already in use, or you already have a verified email';
+      }
+      final message = _extractErrorMessage(response, fallback);
+      return {'success': false, 'message': message};
     }
   }
 

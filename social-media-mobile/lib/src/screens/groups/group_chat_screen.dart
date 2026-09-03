@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../database/local_chat_repository.dart';
 import '../../models/group.dart';
 import '../../models/message.dart';
 import '../../services/api_service.dart';
@@ -25,7 +28,16 @@ import 'package:social_chat_app/src/theme/colors.dart';
 class GroupChatScreen extends StatefulWidget {
   final GroupSummary group;
 
-  const GroupChatScreen({super.key, required this.group});
+  /// True when rendered as the right-hand pane of the desktop Connect
+  /// split view rather than pushed as its own route — see the matching
+  /// doc comment on `ChatDetailScreen.embedded`. [onEmbeddedClose] is
+  /// called instead of `Navigator.pop()` for the one place this screen
+  /// closes itself (leaving the group), so the parent can clear the
+  /// selection instead of popping a route that was never pushed.
+  final bool embedded;
+  final VoidCallback? onEmbeddedClose;
+
+  const GroupChatScreen({super.key, required this.group, this.embedded = false, this.onEmbeddedClose});
 
   @override
   State<GroupChatScreen> createState() => _GroupChatScreenState();
@@ -56,6 +68,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   /// Set from _init()'s active-call lookup and refreshed on return from a
   /// call — drives the "N on a call · Join" banner ("join later").
   Map<String, dynamic>? _activeGroupCall;
+
+  // Spec §6: unsent drafts stored locally — mirrors the DIRECT chat screen's
+  // wiring (see ChatDetailScreen for the full reasoning).
+  Timer? _draftSaveTimer;
 
   Future<void> _startGroupCall({required bool isVideo}) async {
     setState(() => _isStartingCall = true);
@@ -114,6 +130,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   void initState() {
     super.initState();
     _init();
+    _controller.addListener(_onMessageTextChanged);
+    _loadDraft();
   }
 
   Future<void> _init() async {
@@ -124,6 +142,37 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     // Clears the unread badge on the Connect list; failures are non-fatal.
     GroupApi.markRead(widget.group.id).catchError((_) {});
     _refreshActiveGroupCall();
+  }
+
+  /// Local SQLite is mobile-only by design (Phase 2) — deliberately skipped
+  /// on web. widget.group.id is the group's real conversationId (same
+  /// shared-PK space as DIRECT conversations' conversationId, per G0/G1),
+  /// so it's always a valid, non-nullable drafts key here — unlike the
+  /// DIRECT screen, no legacy/brand-new-conversation null case to handle.
+  Future<void> _loadDraft() async {
+    if (kIsWeb) return;
+    try {
+      final draft = await LocalChatRepository().loadDraft(widget.group.id);
+      if (draft != null && draft.isNotEmpty && mounted && _controller.text.isEmpty) {
+        _controller.text = draft;
+        _controller.selection = TextSelection.fromPosition(
+          TextPosition(offset: _controller.text.length),
+        );
+      }
+    } catch (e) {
+      print('[GroupChat] Error loading draft: $e');
+    }
+  }
+
+  void _onMessageTextChanged() {
+    if (kIsWeb) return;
+    _draftSaveTimer?.cancel();
+    final text = _controller.text;
+    _draftSaveTimer = Timer(const Duration(milliseconds: 500), () {
+      LocalChatRepository().saveDraft(widget.group.id, text).catchError((e) {
+        print('[GroupChat] Error saving draft: $e');
+      });
+    });
   }
 
   Future<void> _loadMembers() async {
@@ -193,6 +242,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
     _controller.clear();
+    _draftSaveTimer?.cancel();
+    if (!kIsWeb) {
+      LocalChatRepository().clearDraft(widget.group.id).catchError((e) {
+        print('[GroupChat] Error clearing draft: $e');
+      });
+    }
 
     final clientId = const Uuid().v4();
     final replyTarget = _replyingTo;
@@ -235,6 +290,18 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   @override
   void dispose() {
     _unsubscribe?.call();
+    // Flush any pending debounced draft save immediately instead of losing
+    // it — must read .text and cancel the timer BEFORE disposing the
+    // controller. Fire-and-forget (dispose is sync); errors are logged, not
+    // thrown, matching this method's other cleanup calls.
+    _draftSaveTimer?.cancel();
+    if (!kIsWeb) {
+      final pendingText = _controller.text;
+      LocalChatRepository().saveDraft(widget.group.id, pendingText).catchError((e) {
+        print('[GroupChat] Error saving draft on dispose: $e');
+      });
+    }
+    _controller.removeListener(_onMessageTextChanged);
     _controller.dispose();
     _searchController.dispose();
     _scrollController.dispose();
@@ -248,6 +315,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: !widget.embedded,
         actions: [
           IconButton(
             tooltip: 'Voice call',
@@ -279,7 +347,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   builder: (_) => GroupInfoScreen(group: widget.group)),
             );
             if (left == true && mounted) {
-              Navigator.of(context).pop(); // we left the group; close the chat
+              if (widget.embedded) {
+                widget.onEmbeddedClose?.call();
+              } else {
+                Navigator.of(context).pop(); // we left the group; close the chat
+              }
             }
           },
           child: Row(

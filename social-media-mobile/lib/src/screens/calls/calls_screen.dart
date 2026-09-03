@@ -10,6 +10,7 @@ import '../../services/call_signaling_service.dart';
 import '../../state/call_state_manager.dart';
 import '../../utils/timestamp_parser.dart';
 import '../../components/squircle_avatar.dart';
+import '../../responsive/desktop_content_wrapper.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
 class CallsScreen extends StatefulWidget {
@@ -87,6 +88,8 @@ class _CallsScreenState extends State<CallsScreen> with AutomaticKeepAliveClient
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       body: SafeArea(
+        child: DesktopContentWrapper(
+        maxWidth: 640,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -172,6 +175,7 @@ class _CallsScreenState extends State<CallsScreen> with AutomaticKeepAliveClient
               ),
             ),
           ],
+        ),
         ),
       ),
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../components/app_logo.dart';
 import '../../components/custom_text_field.dart';
+import '../../components/phone_number_field.dart';
 import '../../components/segment_tabs.dart';
 import '../../components/two_step_card.dart';
 import '../../theme/colors.dart';
@@ -73,6 +74,17 @@ class _SignupScreenState extends ConsumerState<SignupScreen> with SingleTickerPr
 
     if (full.isEmpty || user.isEmpty || pass.isEmpty || (usingPhone ? phone.isEmpty : email.isEmpty)) {
       snack.showSnackBar(const SnackBar(content: Text('Please fill all fields')));
+      return;
+    }
+    // Found live: nothing was blocking a space (or any other character) in
+    // the username here — it would sail through this screen's own
+    // check-availability call (which only checks uniqueness, not format)
+    // and only get caught later by the backend's own validation. Mirrors
+    // RegisterRequest's @Pattern exactly, so this is a pure early-exit — the
+    // backend remains the real, authoritative check either way.
+    if (!RegExp(r'^[a-zA-Z0-9_.]+$').hasMatch(user)) {
+      snack.showSnackBar(const SnackBar(
+          content: Text('Username can only contain letters, numbers, underscores, and periods — no spaces')));
       return;
     }
     if (pass.length < 6) {
@@ -155,9 +167,10 @@ class _SignupScreenState extends ConsumerState<SignupScreen> with SingleTickerPr
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
     final maxWidth = MediaQuery.of(context).size.width > 520 ? 520.0 : MediaQuery.of(context).size.width * 0.94;
+    final themed = ThemedColors.of(context);
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      // No explicit backgroundColor — see login_screen.dart for why.
       body: SafeArea(
         child: RepaintBoundary(
           child: Center(
@@ -183,7 +196,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> with SingleTickerPr
                           Text(
                             'Connect with friends and share moments',
                             textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AppColors.muted),
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: themed.muted),
                           ),
                           const SizedBox(height: 22),
                           CustomTextField(controller: _fullNameCtrl, hintText: 'Full Name', keyboardType: TextInputType.name),
@@ -199,18 +212,14 @@ class _SignupScreenState extends ConsumerState<SignupScreen> with SingleTickerPr
                           if (_method == 0)
                             CustomTextField(controller: _emailCtrl, hintText: 'Email', keyboardType: TextInputType.emailAddress)
                           else
-                            CustomTextField(
-                              controller: _phoneCtrl,
-                              hintText: 'Phone Number (e.g. +919876543210)',
-                              keyboardType: TextInputType.phone,
-                            ),
+                            PhoneNumberField(controller: _phoneCtrl, hintText: 'Phone number'),
                           const SizedBox(height: 12),
                           CustomTextField(
                             controller: _passwordCtrl,
                             hintText: 'Password',
                             obscureText: _obscure,
                             suffix: IconButton(
-                              icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility, color: AppColors.muted),
+                              icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility, color: themed.muted),
                               onPressed: () => setState(() => _obscure = !_obscure),
                             ),
                           ),

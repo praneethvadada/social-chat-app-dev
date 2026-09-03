@@ -2,8 +2,8 @@ package com.socialmedia.auth.service;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
@@ -18,8 +18,8 @@ import com.socialmedia.auth.client.SocialServiceClient;
 import com.socialmedia.auth.dto.AuthResponse;
 import com.socialmedia.auth.dto.LoginRequest;
 import com.socialmedia.auth.dto.RegisterRequest;
-import com.socialmedia.auth.entity.PasswordResetToken;
 import com.socialmedia.auth.entity.PhoneOtpVerification;
+import com.socialmedia.auth.entity.SecurityEvent;
 import com.socialmedia.auth.entity.User;
 import com.socialmedia.auth.exception.AuthApiException;
 import com.socialmedia.auth.repository.PasswordResetTokenRepository;
@@ -46,6 +46,10 @@ public class AuthService {
     private final PhoneOtpService phoneOtpService;
     private final PhoneNumberValidator phoneNumberValidator;
     private final IdentifierResolver identifierResolver;
+    private final DeviceSessionService deviceSessionService;
+    private final ActiveWebSessionService activeWebSessionService;
+    private final TwoFactorAuthService twoFactorAuthService;
+    private final SecurityEventService securityEventService;
 
     public AuthService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
@@ -57,7 +61,11 @@ public class AuthService {
                        OtpService otpService,
                        PhoneOtpService phoneOtpService,
                        PhoneNumberValidator phoneNumberValidator,
-                       IdentifierResolver identifierResolver) {
+                       IdentifierResolver identifierResolver,
+                       DeviceSessionService deviceSessionService,
+                       ActiveWebSessionService activeWebSessionService,
+                       TwoFactorAuthService twoFactorAuthService,
+                       SecurityEventService securityEventService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenProvider = tokenProvider;
@@ -69,6 +77,10 @@ public class AuthService {
         this.phoneOtpService = phoneOtpService;
         this.phoneNumberValidator = phoneNumberValidator;
         this.identifierResolver = identifierResolver;
+        this.deviceSessionService = deviceSessionService;
+        this.activeWebSessionService = activeWebSessionService;
+        this.twoFactorAuthService = twoFactorAuthService;
+        this.securityEventService = securityEventService;
     }
 
     private static final int MAX_FAILED_ATTEMPTS = 5;
@@ -76,6 +88,11 @@ public class AuthService {
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
+        return register(request, null);
+    }
+
+    @Transactional
+    public AuthResponse register(RegisterRequest request, String ipAddress) {
         if (userRepository.existsByUsername(request.getUsername())) {
             throw new RuntimeException("Username already exists");
         }
@@ -102,7 +119,7 @@ public class AuthService {
             if (userRepository.existsByEmail(normalizedEmail)) {
                 throw new RuntimeException("Email already exists");
             }
-            if (!otpService.hasRecentVerification(normalizedEmail)) {
+            if (!otpService.hasRecentVerification(normalizedEmail, com.socialmedia.auth.entity.OtpVerification.Purpose.EMAIL_VERIFICATION)) {
                 throw new AuthApiException(AuthApiException.ErrorCode.VERIFICATION_REQUIRED,
                         "Email must be verified (send-otp / verify-otp) before registering", HttpStatus.BAD_REQUEST);
             }
@@ -174,12 +191,20 @@ public class AuthService {
             emailService.sendWelcomeEmail(savedUser.getEmail(), savedUser.getUsername());
         }
 
-        String accessToken = tokenProvider.generateAccessToken(savedUser.getId(), savedUser.getEmail());
-        String refreshToken = tokenProvider.generateRefreshToken(savedUser.getId(), savedUser.getEmail());
+        var device = deviceSessionService.registerDevice(savedUser.getId(), request.getDeviceInfo());
+        var session = device == null ? null : deviceSessionService.createSession(savedUser.getId(), device.getId(), ipAddress);
+        String sessionToken = session == null ? null : session.getSessionToken();
+        Long deviceId = device == null ? null : device.getId();
+        if (device != null && session != null && "WEB".equals(device.getPlatform())) {
+            activeWebSessionService.claimOrReplace(savedUser.getId(), deviceId, session);
+        }
+
+        String accessToken = tokenProvider.generateAccessToken(savedUser.getId(), savedUser.getEmail(), sessionToken, deviceId);
+        String refreshToken = tokenProvider.generateRefreshToken(savedUser.getId(), savedUser.getEmail(), sessionToken, deviceId);
 
         storeRefreshToken(savedUser.getId(), refreshToken);
 
-        return new AuthResponse(
+        AuthResponse response = new AuthResponse(
             accessToken,
             refreshToken,
             savedUser.getId(),
@@ -187,10 +212,48 @@ public class AuthService {
             savedUser.getEmail(),
             savedUser.getFullName()
         );
+        response.setDeviceId(deviceId);
+        return response;
     }
 
     @Transactional
     public AuthResponse login(LoginRequest request) {
+        return login(request, null);
+    }
+
+    // Phase 7: noRollbackFor is required here — throwing
+    // TwoFactorRequiredException to signal the challenge flow is normal
+    // control flow, not a failure, but Spring's default behavior for any
+    // unchecked exception is to roll back the whole transaction. Without
+    // this, the OTP row sendLoginChallengeOtp() just saved (moments earlier,
+    // in this same transaction) would be silently undone the instant the
+    // exception propagates — the client would get a challengeToken for an
+    // OTP that was never actually persisted. Post-Phase-10: WebSessionConflictException
+    // (thrown from finishLogin(), called at the bottom of this method) added
+    // defensively for the same class of reason — nothing critical is written
+    // before that throw point today, but relying on that staying true forever
+    // is more fragile than just declaring the same guard TwoFactorRequiredException
+    // already needed.
+    //
+    // SEVERE PRE-EXISTING BUG found+fixed while live-testing the new
+    // LOGIN_FAILED push-notification feature: BadCredentialsException was
+    // NOT in this list, despite being thrown on every wrong-password
+    // attempt right after handleFailedLogin(user) — a real DB write
+    // (userRepository.save(user), incrementing failedLoginAttempts, the
+    // actual MAX_FAILED_ATTEMPTS lockout counter). That write was being
+    // silently rolled back on EVERY SINGLE wrong-password attempt this
+    // entire time, meaning the account-lockout brute-force protection has
+    // never actually worked — failed_login_attempts stayed at 0 forever,
+    // confirmed empirically (3 wrong passwords in a row against a live
+    // test account, checked the DB directly: still 0 after). Only the
+    // separate, much weaker Phase 10 IP-based rate limiter (20/hour,
+    // trivially bypassed by rotating IPs) was ever actually protecting
+    // this endpoint. Fixed by adding BadCredentialsException here too.
+    @Transactional(noRollbackFor = {
+            com.socialmedia.auth.exception.TwoFactorRequiredException.class,
+            com.socialmedia.auth.exception.WebSessionConflictException.class,
+            org.springframework.security.authentication.BadCredentialsException.class})
+    public AuthResponse login(LoginRequest request, String ipAddress) {
 
         User user;
 
@@ -226,12 +289,23 @@ public class AuthService {
             if (isAccountUnlockTime(user)) {
                 unlockAccount(user);
             } else {
+                // Post-Phase-10, user-requested: notify on every unsuccessful
+                // attempt too, not just successful logins — someone is still
+                // trying to get into a locked account, worth knowing about.
+                securityEventService.record(user.getId(), SecurityEvent.EventType.LOGIN_FAILED, null, null,
+                        ipAddress, null, Map.of("reason", "account_locked"));
                 throw new RuntimeException("Account is locked due to multiple failed login attempts");
             }
         }
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             handleFailedLogin(user);
+            // Same reasoning as the locked-account case above — a wrong
+            // password against a real, resolvable account (whichever
+            // identifier type was used: email, username, or phone) is
+            // exactly the "someone's trying my account" signal worth a push.
+            securityEventService.record(user.getId(), SecurityEvent.EventType.LOGIN_FAILED, null, null,
+                    ipAddress, null, Map.of("reason", "wrong_password"));
             throw new BadCredentialsException("Invalid credentials");
         }
 
@@ -243,8 +317,161 @@ public class AuthService {
         user.setLastLogin(LocalDateTime.now());
         userRepository.save(user);
 
-        String accessToken = tokenProvider.generateAccessToken(user.getId(), user.getEmail());
-        String refreshToken = tokenProvider.generateRefreshToken(user.getId(), user.getEmail());
+        // Phase 7: credentials are correct, but 2FA still needs to pass
+        // before any session/device is created or a real token is issued.
+        if (Boolean.TRUE.equals(user.getTwoFactorEnabled())) {
+            twoFactorAuthService.sendLoginChallengeOtp(user);
+            String challengeToken = tokenProvider.generateTwoFactorChallengeToken(user.getId());
+            throw new com.socialmedia.auth.exception.TwoFactorRequiredException(
+                    new com.socialmedia.auth.dto.TwoFactorChallengeResponse(user.getTwoFactorMethod(), challengeToken));
+        }
+
+        checkWebSessionConflict(user, request.getDeviceInfo());
+        return finishLogin(user, request.getDeviceInfo(), ipAddress);
+    }
+
+    /**
+     * Post-Phase-10 UX change: previously a WEB login called
+     * activeWebSessionService.claimOrReplace() unconditionally inside
+     * finishLogin(), silently kicking whichever device already held the
+     * account's single active web session with zero warning. Now, BEFORE
+     * any device/session row is created, this checks whether logging in
+     * would be a genuine takeover (a different device, not just a
+     * refreshed tab) and, if so, throws WebSessionConflictException instead
+     * of proceeding — caught in AuthController and returned as a 200
+     * challenge response, the same "pause and ask" shape as
+     * TwoFactorRequiredException. The actual takeover only happens via
+     * confirmWebSessionTakeover() below, once the user explicitly confirms.
+     * Called by login() and completeTwoFactorLogin(), each right before
+     * their own call to finishLogin() — deliberately NOT called from inside
+     * finishLogin() itself, since confirmWebSessionTakeover() needs to call
+     * straight into finishLogin() without re-triggering this same check
+     * (which would otherwise throw again forever, since the conflicting
+     * device hasn't been replaced yet at that point).
+     */
+    private void checkWebSessionConflict(User user, com.socialmedia.auth.dto.DeviceInfoRequest deviceInfo) {
+        if (deviceInfo == null || !"WEB".equalsIgnoreCase(deviceInfo.getPlatform())) {
+            return;
+        }
+        activeWebSessionService.findConflictingDevice(user.getId(), deviceInfo.getDeviceId())
+                .ifPresent(conflictingDevice -> {
+                    String challengeToken = tokenProvider.generateWebSessionConfirmToken(user.getId());
+                    throw new com.socialmedia.auth.exception.WebSessionConflictException(
+                            new com.socialmedia.auth.dto.WebSessionConflictResponse(
+                                    challengeToken,
+                                    conflictingDevice.getPlatform(),
+                                    conflictingDevice.getOsName(),
+                                    conflictingDevice.getBrowserName(),
+                                    conflictingDevice.getDeviceModel()));
+                });
+    }
+
+    /**
+     * Phase 7: POST /login/2fa/verify — completes a login that was paused
+     * for a 2FA challenge. Validates the short-lived challenge token (must
+     * be one from generateTwoFactorChallengeToken, not a real access/
+     * refresh token), verifies the OTP against the account's configured
+     * method, and only then does exactly what the non-2FA path does:
+     * create the device/session and issue real tokens.
+     *
+     * Post-Phase-10: noRollbackFor(WebSessionConflictException) — this
+     * method's own write (verifyLoginChallengeOtp marking the OTP row used)
+     * must survive finishLogin() throwing that exception at its very start,
+     * same reasoning as TwoFactorRequiredException's own noRollbackFor
+     * elsewhere in this class.
+     */
+    @Transactional(noRollbackFor = com.socialmedia.auth.exception.WebSessionConflictException.class)
+    public AuthResponse completeTwoFactorLogin(String challengeToken, String otp, com.socialmedia.auth.dto.DeviceInfoRequest deviceInfo, String ipAddress) {
+        if (!tokenProvider.validateToken(challengeToken) || !tokenProvider.isTwoFactorChallengeToken(challengeToken)) {
+            throw new AuthApiException(AuthApiException.ErrorCode.OTP_INVALID, "Invalid or expired challenge", HttpStatus.BAD_REQUEST);
+        }
+        Long userId = tokenProvider.getUserIdFromToken(challengeToken);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new AuthApiException(AuthApiException.ErrorCode.USER_NOT_FOUND, "User not found", HttpStatus.NOT_FOUND));
+
+        if (!Boolean.TRUE.equals(user.getTwoFactorEnabled())) {
+            // 2FA was disabled between challenge issuance and now — the
+            // challenge token is stale; the client should just log in again
+            // through the normal (now-2FA-free) path instead.
+            throw new AuthApiException(AuthApiException.ErrorCode.TWO_FA_NOT_ENABLED,
+                    "Two-factor authentication is no longer enabled on this account", HttpStatus.BAD_REQUEST);
+        }
+
+        boolean verified = twoFactorAuthService.verifyLoginChallengeOtp(user, otp);
+        if (!verified) {
+            throw new AuthApiException(AuthApiException.ErrorCode.OTP_INVALID, "Invalid or expired OTP", HttpStatus.BAD_REQUEST);
+        }
+
+        checkWebSessionConflict(user, deviceInfo);
+        return finishLogin(user, deviceInfo, ipAddress);
+    }
+
+    /**
+     * Post-Phase-10: POST /login/web-session/confirm — completes a login
+     * that was paused by checkWebSessionConflict() (called from either
+     * login() or completeTwoFactorLogin()). Validates the short-lived
+     * confirm token (must be one from generateWebSessionConfirmToken, not a
+     * real access/refresh token — see isWebSessionConfirmToken's own doc
+     * comment for why that guard matters), then calls straight into
+     * finishLogin() — deliberately bypassing checkWebSessionConflict() this
+     * second time, since the user has now explicitly agreed to the
+     * takeover and re-checking would just throw the same conflict forever.
+     */
+    @Transactional
+    public AuthResponse confirmWebSessionTakeover(String challengeToken, com.socialmedia.auth.dto.DeviceInfoRequest deviceInfo, String ipAddress) {
+        if (!tokenProvider.validateToken(challengeToken) || !tokenProvider.isWebSessionConfirmToken(challengeToken)) {
+            throw new AuthApiException(AuthApiException.ErrorCode.OTP_INVALID, "Invalid or expired challenge", HttpStatus.BAD_REQUEST);
+        }
+        Long userId = tokenProvider.getUserIdFromToken(challengeToken);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new AuthApiException(AuthApiException.ErrorCode.USER_NOT_FOUND, "User not found", HttpStatus.NOT_FOUND));
+
+        return finishLogin(user, deviceInfo, ipAddress);
+    }
+
+    /** Phase 7: resends the login-challenge OTP for an in-progress 2FA login. */
+    public void resendTwoFactorLoginOtp(String challengeToken) {
+        if (!tokenProvider.validateToken(challengeToken) || !tokenProvider.isTwoFactorChallengeToken(challengeToken)) {
+            throw new AuthApiException(AuthApiException.ErrorCode.OTP_INVALID, "Invalid or expired challenge", HttpStatus.BAD_REQUEST);
+        }
+        Long userId = tokenProvider.getUserIdFromToken(challengeToken);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new AuthApiException(AuthApiException.ErrorCode.USER_NOT_FOUND, "User not found", HttpStatus.NOT_FOUND));
+        twoFactorAuthService.resendLoginChallengeOtp(user);
+    }
+
+    /**
+     * Everything that happens once a login is actually allowed to complete
+     * — device/session creation, single-active-web-session enforcement,
+     * token issuance, profile sync. Shared by the normal (no 2FA) path and
+     * completeTwoFactorLogin, so both end up with identical session/device
+     * behavior; only how they got here differs.
+     *
+     * Post-Phase-10 UX change: this method itself no longer decides whether
+     * a WEB takeover needs confirmation — checkWebSessionConflict() (called
+     * by login()/completeTwoFactorLogin() BEFORE they call this method) does
+     * that, and confirmWebSessionTakeover() deliberately calls straight into
+     * this method WITHOUT that check, since by then the user has already
+     * confirmed. Putting the check inside finishLogin() itself was tried
+     * first and rejected — confirmWebSessionTakeover() calling finishLogin()
+     * would re-detect the same still-present conflict and throw again,
+     * an infinite "confirm" loop that never actually logs in.
+     * activeWebSessionService.claimOrReplace() below still runs
+     * unconditionally on every WEB login exactly as before — it's a genuine
+     * takeover only if checkWebSessionConflict() didn't already catch it
+     * (i.e., this is a same-device re-login, which was never a conflict).
+     */
+    private AuthResponse finishLogin(User user, com.socialmedia.auth.dto.DeviceInfoRequest deviceInfo, String ipAddress) {
+        var device = deviceSessionService.registerDevice(user.getId(), deviceInfo);
+        var session = device == null ? null : deviceSessionService.createSession(user.getId(), device.getId(), ipAddress);
+        String sessionToken = session == null ? null : session.getSessionToken();
+        Long deviceId = device == null ? null : device.getId();
+        if (device != null && session != null && "WEB".equals(device.getPlatform())) {
+            activeWebSessionService.claimOrReplace(user.getId(), deviceId, session);
+        }
+
+        String accessToken = tokenProvider.generateAccessToken(user.getId(), user.getEmail(), sessionToken, deviceId);
+        String refreshToken = tokenProvider.generateRefreshToken(user.getId(), user.getEmail(), sessionToken, deviceId);
 
         storeRefreshToken(user.getId(), refreshToken);
         // Sync profile on login to ensure placeholders are replaced with real data
@@ -268,7 +495,7 @@ public class AuthService {
             logger.error("Failed to sync profile during login for userId: {}", user.getId(), e);
         }
 
-        return new AuthResponse(
+        AuthResponse response = new AuthResponse(
             accessToken,
             refreshToken,
             user.getId(),
@@ -276,14 +503,36 @@ public class AuthService {
             user.getEmail(),
             user.getFullName()
         );
+        response.setDeviceId(deviceId);
+        return response;
     }
 
     @Transactional
     public void logout(Long userId) {
-        // 1. Delete Refresh Token from Redis
-        redisTemplate.delete("refresh_token:" + userId);
-        
-        // 2. Clear FCM Token from Database to stop notifications to this device for this user
+        logout(userId, null);
+    }
+
+    @Transactional
+    public void logout(Long userId, String sessionToken) {
+        // 1. Revoke this specific session (device/session tracking) so its
+        // access token stops working on its next request, not just at
+        // natural expiry. Done first and unconditionally — this is the
+        // actual security-relevant action or logout, unlike the two
+        // best-effort steps below.
+        deviceSessionService.revokeSessionByToken(userId, sessionToken, "user_logout");
+
+        // 2. Delete Refresh Token from Redis. Same "Redis optional in
+        // local/dev" defensive pattern as storeRefreshToken()/refreshToken()
+        // elsewhere in this class — without it, a Redis outage would 500 the
+        // whole logout call and step 1 above (already committed in this same
+        // @Transactional method) would roll back along with it.
+        try {
+            redisTemplate.delete("refresh_token:" + userId);
+        } catch (Exception e) {
+            logger.warn("Skipping refresh token cache delete on logout for user {} (Redis unavailable): {}", userId, e.getMessage());
+        }
+
+        // 3. Clear FCM Token from Database to stop notifications to this device for this user
         try {
             User user = userRepository.findById(userId).orElse(null);
             if (user != null) {
@@ -316,8 +565,11 @@ public class AuthService {
         User user = userRepository.findById(userId)
             .orElseThrow(() -> new RuntimeException("User not found"));
 
-        String newAccessToken = tokenProvider.generateAccessToken(user.getId(), user.getEmail());
-        String newRefreshToken = tokenProvider.generateRefreshToken(user.getId(), user.getEmail());
+        // Not currently called by the client (it only ever uses the access
+        // token — see the architecture plan's Q4 discussion), so there's no
+        // existing session to re-link here; refreshed tokens carry no "sid".
+        String newAccessToken = tokenProvider.generateAccessToken(user.getId(), user.getEmail(), null, null);
+        String newRefreshToken = tokenProvider.generateRefreshToken(user.getId(), user.getEmail(), null, null);
 
         storeRefreshToken(user.getId(), newRefreshToken);
 
@@ -416,49 +668,6 @@ public class AuthService {
         }
     }
     
-    @Transactional
-    public void initiatePasswordReset(String email) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found with email: " + email));
-        
-        passwordResetTokenRepository.deleteByUser(user);
-        
-        String token = UUID.randomUUID().toString();
-        
-        PasswordResetToken resetToken = new PasswordResetToken();
-        resetToken.setToken(token);
-        resetToken.setUser(user);
-        resetToken.setExpiryDate(LocalDateTime.now().plusHours(1));
-        resetToken.setUsed(false);
-        
-        passwordResetTokenRepository.save(resetToken);
-        
-        emailService.sendPasswordResetEmail(user.getEmail(), user.getUsername(), token);
-    }
-    
-    @Transactional
-    public void resetPassword(String token, String newPassword) {
-        PasswordResetToken resetToken = passwordResetTokenRepository.findByToken(token)
-                .orElseThrow(() -> new RuntimeException("Invalid password reset token"));
-        
-        if (resetToken.getUsed()) {
-            throw new RuntimeException("Password reset token has already been used");
-        }
-        
-        if (resetToken.isExpired()) {
-            throw new RuntimeException("Password reset token has expired");
-        }
-        
-        User user = resetToken.getUser();
-        user.setPassword(passwordEncoder.encode(newPassword));
-        userRepository.save(user);
-        
-        resetToken.setUsed(true);
-        passwordResetTokenRepository.save(resetToken);
-        
-        emailService.sendPasswordChangedEmail(user.getEmail(), user.getUsername());
-    }
-    
     /**
      * Send OTP for password reset
      */
@@ -475,17 +684,38 @@ public class AuthService {
     }
     
     /**
-     * Reset password after OTP verification
+     * Reset password after OTP verification.
+     *
+     * SECURITY FIX (found while wiring Phase 8's audit event into this exact
+     * method): despite the doc comment above always having claimed "after
+     * OTP verification", nothing here ever actually checked one — the
+     * endpoint accepted {email, newPassword} alone and reset the password
+     * unconditionally, letting anyone take over any account just by knowing
+     * its email address. otp is now REQUIRED and verified here before the
+     * password is touched.
      */
     @Transactional
-    public void resetPasswordWithEmail(String email, String newPassword) {
+    public void resetPasswordWithEmail(String email, String otp, String newPassword) {
+        if (otp == null || otp.isBlank()) {
+            throw new AuthApiException(AuthApiException.ErrorCode.OTP_INVALID, "otp is required", HttpStatus.BAD_REQUEST);
+        }
+
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("User not found with email: " + email));
-        
+
+        boolean verified = otpService.verifyOtp(email, otp, com.socialmedia.auth.entity.OtpVerification.Purpose.PASSWORD_RESET);
+        if (!verified) {
+            throw new AuthApiException(AuthApiException.ErrorCode.OTP_INVALID, "Invalid or expired OTP", HttpStatus.BAD_REQUEST);
+        }
+
         user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
-        
-        emailService.sendPasswordChangedEmail(user.getEmail(), user.getUsername());
+
+        // Phase 9: the plain-text sendPasswordChangedEmail() call that used
+        // to live here is gone — record() below now sends the HTML security
+        // alert itself (SecurityEventService's own doc comment), so keeping
+        // both would have emailed the user twice for one password reset.
+        securityEventService.record(user.getId(), SecurityEvent.EventType.PASSWORD_CHANGED, null, null, null, null, null);
     }
     
     /**
@@ -538,6 +768,7 @@ public class AuthService {
             throw new AuthApiException(AuthApiException.ErrorCode.PHONE_ALREADY_EXISTS,
                     "Phone number already belongs to another account", HttpStatus.CONFLICT);
         }
+        securityEventService.record(userId, SecurityEvent.EventType.PHONE_CHANGED, null, null, null, null, null);
     }
 
     /**
@@ -567,16 +798,53 @@ public class AuthService {
             throw new AuthApiException(AuthApiException.ErrorCode.EMAIL_ALREADY_EXISTS,
                     "Email already belongs to another account", HttpStatus.CONFLICT);
         }
+        securityEventService.record(userId, SecurityEvent.EventType.EMAIL_CHANGED, null, null, null, null, null);
     }
 
     /**
-     * Delete user account
+     * Delete user account. HARDENING FIX (Phase 10 audit): the previous
+     * entry point took a bare userId with no verification of its own,
+     * trusting the caller (AuthController.deleteAccount) to have already
+     * checked identity — which it did via {email, password} in an
+     * UNAUTHENTICATED request body ("/account" was in SecurityConfig's
+     * permitAll list), never checking a Bearer token at all AND never
+     * checking whether the account had 2FA enabled. That meant the single
+     * most destructive, irreversible action in the entire app - permanent
+     * account deletion - could be performed with nothing but a leaked
+     * password, completely bypassing 2FA even on an account that enabled
+     * it specifically to survive a leaked password. This is the exact same
+     * severity class as the two bugs already found and fixed in Phases 7-8
+     * (2FA/OTP bypass, unauthenticated password reset).
+     *
+     * Now requires: a valid Bearer token (userId comes from there, not a
+     * client-supplied email - "/account" removed from permitAll), the
+     * current password, and - if 2FA is enabled on the account - a valid
+     * OTP too, mirroring TwoFactorAuthService.disable()'s own
+     * re-authentication bar for a similarly-irreversible action.
      */
     @Transactional
-    public void deleteAccount(Long userId) {
+    public void deleteAccount(Long userId, String password, String otp) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-        
+                .orElseThrow(() -> new AuthApiException(AuthApiException.ErrorCode.USER_NOT_FOUND, "User not found", HttpStatus.NOT_FOUND));
+
+        if (password == null || !passwordEncoder.matches(password, user.getPassword())) {
+            throw new AuthApiException(AuthApiException.ErrorCode.INVALID_PASSWORD, "Incorrect password", HttpStatus.BAD_REQUEST);
+        }
+        if (Boolean.TRUE.equals(user.getTwoFactorEnabled())) {
+            if (otp == null || otp.isBlank()) {
+                throw new AuthApiException(AuthApiException.ErrorCode.OTP_INVALID,
+                        "Two-factor authentication is enabled on this account - otp is required", HttpStatus.BAD_REQUEST);
+            }
+            if (!twoFactorAuthService.verifyLoginChallengeOtp(user, otp)) {
+                throw new AuthApiException(AuthApiException.ErrorCode.OTP_INVALID, "Invalid or expired OTP", HttpStatus.BAD_REQUEST);
+            }
+        }
+
+        performAccountDeletion(user);
+    }
+
+    private void performAccountDeletion(User user) {
+        Long userId = user.getId();
         logger.info("Deleting account for user ID: {}", userId);
         
         // Delete user data from social service
@@ -588,17 +856,36 @@ public class AuthService {
             // Continue with auth service deletion even if social service fails
         }
 
+        // Recorded before the row is actually gone — security_events.user_id
+        // has no FK constraint (a plain audit column, not a relationship), so
+        // this row survives the account's deletion, which is the point: a
+        // record that account N requested deletion at time T outlives N.
+        securityEventService.record(userId, SecurityEvent.EventType.ACCOUNT_DELETED, null, null, null, null, null);
+
         // Cleanup auth-side dependent rows first.
         // In production, password_reset_tokens.user_id uses NO ACTION and can block user delete.
         passwordResetTokenRepository.deleteByUser(user);
-        
+
         // Delete user from auth database
         userRepository.delete(user);
-        
-        // Clear refresh tokens from Redis
-        String refreshTokenKey = "refresh_token:" + userId;
-        redisTemplate.delete(refreshTokenKey);
-        
+
+        // Clear refresh tokens from Redis. SECURITY/CORRECTNESS FIX (found
+        // while testing Phase 8's ACCOUNT_DELETED event): this call was
+        // completely unguarded, so a Redis outage 500'd the entire method —
+        // rolling back the whole @Transactional deleteAccount(), including
+        // the user row deletion and the ACCOUNT_DELETED audit event above,
+        // even though both had already "succeeded" up to that point. Same
+        // defensive-Redis pattern already used by storeRefreshToken()/
+        // logout() elsewhere in this class (Redis is treated as optional in
+        // local/dev throughout this codebase — see those methods' own
+        // comments).
+        try {
+            String refreshTokenKey = "refresh_token:" + userId;
+            redisTemplate.delete(refreshTokenKey);
+        } catch (Exception e) {
+            logger.warn("Skipping refresh token cache delete for deleted account {} (Redis unavailable): {}", userId, e.getMessage());
+        }
+
         logger.info("Successfully deleted account for user ID: {}", userId);
     }
 }

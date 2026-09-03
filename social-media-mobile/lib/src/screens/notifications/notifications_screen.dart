@@ -9,6 +9,7 @@ import '../../services/chat_websocket_service.dart';
 import '../../state/app_state_manager.dart';
 import '../user_profile_screen.dart';
 import '../post_detail/post_detail_screen.dart';
+import '../../responsive/breakpoints.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
 class NotificationsScreen extends ConsumerStatefulWidget {
@@ -204,15 +205,42 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
                   ],
                 ),
               ),
-              Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  child: SegmentTabs(
-                      labels: const ['All', '@ Mentions', 'Follows'],
-                      currentIndex: _tab,
-                      onChanged: (i) => setState(() => _tab = i))),
+              // Horizontal segmented tabs on mobile/tablet; a vertical
+              // filter rail beside the list on desktop instead (design
+              // reference: "a filter column"), reusing the exact same
+              // `_tab`/`_filtered` state either way — not a separate,
+              // possibly-drifting second filter implementation.
+              if (!context.isDesktopClass)
+                Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    child: SegmentTabs(
+                        labels: const ['All', '@ Mentions', 'Follows'],
+                        currentIndex: _tab,
+                        onChanged: (i) => setState(() => _tab = i))),
               Expanded(
-                child: _filtered.isEmpty
+                child: !context.isDesktopClass
+                    ? notificationList
+                    : Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildFilterRail(theme, primary),
+                          VerticalDivider(width: 1, color: theme.dividerColor),
+                          Expanded(child: notificationList),
+                        ],
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget get notificationList {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+    return _filtered.isEmpty
                     ? Center(
                         child: Padding(
                           padding: const EdgeInsets.all(32),
@@ -313,10 +341,52 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
                             ),
                           ),
                         ],
-                      ),
+                      );
+  }
+
+  /// Desktop-only vertical filter column beside the notification list,
+  /// replacing the mobile/tablet horizontal `SegmentTabs` row — same
+  /// `_tab` state, just presented differently once there's room for it.
+  Widget _buildFilterRail(ThemeData theme, Color primary) {
+    const labels = ['All', '@ Mentions', 'Follows'];
+    const icons = [Icons.notifications_none_rounded, Icons.alternate_email, Icons.people_alt_outlined];
+    return SizedBox(
+      width: 168,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (int i = 0; i < labels.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => setState(() => _tab = i),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: _tab == i ? primary.withValues(alpha: 0.12) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(icons[i], size: 18, color: _tab == i ? primary : theme.iconTheme.color),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(labels[i],
+                              style: TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: _tab == i ? FontWeight.w700 : FontWeight.w500,
+                                  color: _tab == i ? primary : theme.textTheme.bodyMedium?.color)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-            ],
-          ),
+          ],
         ),
       ),
     );

@@ -17,6 +17,7 @@ import '../../services/api_service.dart';
 import '../../models/user_search.dart';
 import '../../components/tag_people_dialog.dart';
 import '../../state/app_state_manager.dart';
+import '../../responsive/desktop_content_wrapper.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
 class CreatePostScreen extends ConsumerStatefulWidget {
@@ -448,6 +449,8 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
           ),
         ),
         body: SafeArea(
+          child: DesktopContentWrapper(
+          maxWidth: 640,
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -755,6 +758,7 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
                 const SizedBox(height: 40),
               ],
             ),
+          ),
           ),
         ),
       ),

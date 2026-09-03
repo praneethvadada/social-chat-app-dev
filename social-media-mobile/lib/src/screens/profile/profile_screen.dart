@@ -18,6 +18,10 @@ import '../../state/app_state_manager.dart';
 import '../../state/saved_posts_notifier.dart';
 import '../../utils/friendly_error.dart';
 import '../../components/squircle_avatar.dart';
+import '../../responsive/desktop_content_wrapper.dart';
+import '../../responsive/breakpoints.dart';
+import '../../models/group.dart';
+import '../../services/group_api.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -52,6 +56,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> with AutomaticKee
   List<Post> _userPosts = [];
   List<Post> _savedPosts = [];
   List<StatusItem> _moments = [];
+  String? _location;
+  String? _website;
+  // Desktop details column only (see build()) — my groups, reusing the
+  // exact same fetch Connect's group list uses.
+  List<GroupSummary> _myGroups = [];
 
   // Tab selection: 0 = Posts, 1 = Moments, 2 = Saved
   int _selectedTab = 0;
@@ -142,12 +151,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> with AutomaticKee
           _followersCount = profile['followersCount'] ?? 0;
           _followingCount = profile['followingCount'] ?? 0;
           _userId = profile['userId'] ?? 0;
+          _location = (profile['location'] as String?)?.trim();
+          _website = (profile['website'] as String?)?.trim();
           _isLoading = false;
         });
         // Fetch user posts after profile loads
         if (_userId > 0) {
           _loadUserPosts();
         }
+        _loadMyGroups();
       }
     } catch (e) {
       print('\n[ERROR IN _loadProfile]');
@@ -171,6 +183,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> with AutomaticKee
       }
     } catch (e) {
       print('Error loading user posts: $e');
+    }
+  }
+
+  /// Desktop details column only — same fetch Connect's "GROUP SPACES"
+  /// section already uses (`GroupApi.fetchMyGroups`). Failure is silent (no
+  /// error banner) since this is a secondary panel, not core profile data.
+  Future<void> _loadMyGroups() async {
+    try {
+      final groups = await GroupApi.fetchMyGroups();
+      if (mounted) setState(() => _myGroups = groups);
+    } catch (e) {
+      print('Error loading groups for profile details panel: $e');
     }
   }
 
@@ -326,6 +350,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> with AutomaticKee
         },
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
+          child: DesktopContentWrapper(
+          // Wide enough for the 640ish post column + 320 details column
+          // the design reference specifies for desktop, once both appear
+          // side by side (see _buildTabsAndContent) — narrower widths
+          // still get the single 700-wide reading column since the
+          // details panel only shows at isDesktopClass (see below).
+          maxWidth: context.isDesktopClass ? 1000 : 700,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -445,31 +476,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> with AutomaticKee
                       ),
                     ),
 
-                    // Tabs: Posts / Moments / Saved
-                    Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surface,
-                        borderRadius: BorderRadius.circular(25),
-                        border: Border.all(color: AppColors.border!),
-                      ),
-                      child: Row(
-                        children: [
-                          _buildTab(theme, primary, 'Posts', 0),
-                          _buildTab(theme, primary, 'Moments', 1),
-                          _buildTab(theme, primary, 'Saved', 2),
-                        ],
-                      ),
-                    ),
-
-                    // Grid (switched based on selected tab)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 18.0),
-                      child: _buildTabContent(),
-                    ),
+                    _buildTabsAndContent(context, theme, primary),
                   ],
                 ),
             ],
+          ),
           ),
         ),
       ),
@@ -500,6 +511,159 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> with AutomaticKee
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// Tabs (Posts/Moments/Saved) + the grid for whichever tab is selected.
+  /// At `isDesktopClass` (600px+) a details column (About + Groups) sits
+  /// alongside it, matching the design reference's "640 post column and a
+  /// 320 details column carrying about, groups and mutuals" — "mutuals"
+  /// isn't included since there's no mutual-followers endpoint to back it
+  /// with real data (not inventing a new backend call for a layout pass).
+  Widget _buildTabsAndContent(BuildContext context, ThemeData theme, Color primary) {
+    final tabsBar = Container(
+      margin: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(25),
+        border: Border.all(color: AppColors.border!),
+      ),
+      child: Row(
+        children: [
+          _buildTab(theme, primary, 'Posts', 0),
+          _buildTab(theme, primary, 'Moments', 1),
+          _buildTab(theme, primary, 'Saved', 2),
+        ],
+      ),
+    );
+    final tabContent = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18.0),
+      child: _buildTabContent(),
+    );
+
+    if (!context.isDesktopClass) {
+      return Column(children: [tabsBar, tabContent]);
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: Column(children: [tabsBar, tabContent])),
+          SizedBox(
+            width: 300,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 18, left: 8, top: 4),
+              child: _buildDetailsPanel(theme),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Desktop details column: bio/location/link (already-loaded profile
+  /// fields — this UI just didn't surface them before) + a real "GROUPS"
+  /// list via [_myGroups].
+  Widget _buildDetailsPanel(ThemeData theme) {
+    Widget card({required String title, required Widget child}) => Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: theme.cardColor,
+            border: Border.all(color: theme.dividerColor),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: TextStyle(
+                      fontSize: 11.5, fontWeight: FontWeight.w800, letterSpacing: 1.2, color: AppColors.mutedSolid)),
+              const SizedBox(height: 12),
+              child,
+            ],
+          ),
+        );
+
+    final hasAbout = _bio.isNotEmpty || (_location?.isNotEmpty ?? false) || (_website?.isNotEmpty ?? false);
+
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (hasAbout)
+            card(
+              title: 'ABOUT',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_bio.isNotEmpty) Text(_bio, style: TextStyle(color: AppColors.mutedSolid, height: 1.4)),
+                  if (_location?.isNotEmpty ?? false) ...[
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      Icon(Icons.location_on_outlined, size: 16, color: theme.iconTheme.color),
+                      const SizedBox(width: 6),
+                      Expanded(child: Text(_location!, style: const TextStyle(fontSize: 13))),
+                    ]),
+                  ],
+                  if (_website?.isNotEmpty ?? false) ...[
+                    const SizedBox(height: 8),
+                    Row(children: [
+                      Icon(Icons.link, size: 16, color: theme.iconTheme.color),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(_website!,
+                            style: TextStyle(fontSize: 13, color: theme.colorScheme.primary),
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                    ]),
+                  ],
+                ],
+              ),
+            ),
+          if (_myGroups.isNotEmpty)
+            card(
+              title: 'GROUPS',
+              child: Column(
+                children: _myGroups.take(5).map((g) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: AppColors.accentSubtle100,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          alignment: Alignment.center,
+                          child: Icon(Icons.groups_rounded, color: theme.colorScheme.primary, size: 18),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(g.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                              Text('${g.memberCount} members',
+                                  style: TextStyle(fontSize: 11.5, color: AppColors.mutedSolid)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+        ],
       ),
     );
   }

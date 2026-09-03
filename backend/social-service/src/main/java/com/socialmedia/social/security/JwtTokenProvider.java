@@ -28,6 +28,37 @@ public class JwtTokenProvider {
         return Long.parseLong(claims.getSubject());
     }
 
+    /** Phase 7: true for a 2FA login-challenge token - see chats-service's identical method for the full reasoning (this token must never authenticate a real request). */
+    public boolean isTwoFactorChallengeToken(String token) {
+        try {
+            Claims claims = Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token).getPayload();
+            return "2fa_challenge".equals(claims.get("purpose", String.class));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Post-Phase-10: true for a web-session-confirm challenge token - same shape/risk as the 2FA challenge token above. */
+    public boolean isWebSessionConfirmToken(String token) {
+        try {
+            Claims claims = Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token).getPayload();
+            return "web_session_confirm".equals(claims.get("purpose", String.class));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Phase 5: null if the token predates session tracking (no "sid" claim) - mirrors auth-service's own extraction. */
+    public String getSessionIdFromToken(String token) {
+        Claims claims = Jwts.parser()
+                .verifyWith(getSigningKey())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+
+        return claims.get("sid", String.class);
+    }
+
     public boolean validateToken(String token) {
         try {
             Jwts.parser()

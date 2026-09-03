@@ -4,6 +4,8 @@ import 'dart:async';
 import 'dart:math';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import '../../database/local_chat_repository.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
@@ -35,8 +37,18 @@ class ChatDetailScreen extends StatefulWidget {
   final Conversation conversation;
   final bool isNewChat;
 
+  /// True when this is rendered as the right-hand pane of the desktop
+  /// Connect split view (`ChatsScreen` at 768px+) rather than pushed as its
+  /// own full-screen route. The conversation list stays visible alongside
+  /// it in that mode, so there's nothing to "go back" to — the back arrow
+  /// is hidden instead of wired to `Navigator.pop()`, which would have
+  /// nothing to pop (no route was pushed) and could pop the wrong thing.
+  /// Every other line of this screen (WebSocket, drafts, typing, presence)
+  /// is completely unchanged between the two modes.
+  final bool embedded;
+
   const ChatDetailScreen(
-      {super.key, required this.conversation, this.isNewChat = false});
+      {super.key, required this.conversation, this.isNewChat = false, this.embedded = false});
 
   @override
   State<ChatDetailScreen> createState() => _ChatDetailScreenState();
@@ -65,6 +77,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> with WidgetsBinding
     Timer? _typingTimer;
     bool _isTypingSent = false;
     Timer? _participantTypingTimer;
+    // Spec §6: unsent drafts stored locally. Storage layer already existed
+    // (LocalChatRepository.saveDraft/loadDraft/clearDraft) but nothing in
+    // the UI ever called it — wiring it in here.
+    Timer? _draftSaveTimer;
   StreamSubscription<String>? _errorSub;
   // Presence is read from ChatStore via Consumer.
 
@@ -140,16 +156,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> with WidgetsBinding
             print('[ChatDetailScreen] ℹ️ No unread messages to send read receipts for');
           }
             
-            // Load cached messages first (if any)
-            try {
-              chatStore.loadCachedMessagesForUser(widget.conversation.userId).then((_) {
-                print('[ChatDetailScreen] ✅ Loaded cached messages for user=${widget.conversation.userId}');
-              });
-            } catch (e) {
-              print('[ChatDetailScreen] cached load failed (non-blocking): $e');
-            }
-
-            
             // If ChatStore has no messages for this conversation, load initial
             // history once so past messages appear in the UI.
             try {
@@ -184,6 +190,49 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> with WidgetsBinding
     // ✅ NEW: Listen for WebSocket connection changes to update UI
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _webSocketService.addConnectionListener(_onWebSocketConnectionChanged);
+    });
+
+    // Drafts: restore any unsent text, then save (debounced) as the user types.
+    _messageController.addListener(_onMessageTextChanged);
+    _loadDraft();
+  }
+
+  /// Local SQLite is mobile-only by design (Phase 2) — deliberately skipped
+  /// on web rather than letting LocalChatRepository's own try/catch log a
+  /// confusing "DB open failed"-looking error for what's actually expected.
+  /// Null conversationId means a legacy row that predates conversationId
+  /// stamping, or a brand-new conversation before its first message — drafts
+  /// are skipped rather than keyed by something that could collide with a
+  /// real conversationId later.
+  Future<void> _loadDraft() async {
+    if (kIsWeb) return;
+    final conversationId = widget.conversation.conversationId;
+    if (conversationId == null) return;
+    try {
+      final draft = await LocalChatRepository().loadDraft(conversationId);
+      if (draft != null && draft.isNotEmpty && mounted && _messageController.text.isEmpty) {
+        _messageController.text = draft;
+        _messageController.selection = TextSelection.fromPosition(
+          TextPosition(offset: _messageController.text.length),
+        );
+      }
+    } catch (e) {
+      print('[Chat] Error loading draft: $e');
+    }
+  }
+
+  void _onMessageTextChanged() {
+    if (kIsWeb) return;
+    final conversationId = widget.conversation.conversationId;
+    if (conversationId == null) return;
+    _draftSaveTimer?.cancel();
+    final text = _messageController.text;
+    // Debounced so typing doesn't turn into a SQLite write per keystroke —
+    // same reasoning as DeviceSessionService's last-active-at throttle.
+    _draftSaveTimer = Timer(const Duration(milliseconds: 500), () {
+      LocalChatRepository().saveDraft(conversationId, text).catchError((e) {
+        print('[Chat] Error saving draft: $e');
+      });
     });
   }
 
@@ -424,6 +473,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> with WidgetsBinding
 
     final messageText = _messageController.text.trim();
     _messageController.clear();
+    _draftSaveTimer?.cancel();
+    if (!kIsWeb) {
+      final conversationId = widget.conversation.conversationId;
+      if (conversationId != null) {
+        LocalChatRepository().clearDraft(conversationId).catchError((e) {
+          print('[Chat] Error clearing draft: $e');
+        });
+      }
+    }
 
     try {
       final recipientId = widget.conversation.userId;
@@ -639,6 +697,21 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> with WidgetsBinding
   @override
   void dispose() {
     _errorSub?.cancel();
+    // Flush any pending debounced draft save immediately instead of losing
+    // it — must read .text and cancel the timer BEFORE disposing the
+    // controller. Fire-and-forget (dispose is sync); errors are logged, not
+    // thrown, matching every other cleanup call in this method.
+    _draftSaveTimer?.cancel();
+    if (!kIsWeb) {
+      final conversationId = widget.conversation.conversationId;
+      final pendingText = _messageController.text;
+      if (conversationId != null) {
+        LocalChatRepository().saveDraft(conversationId, pendingText).catchError((e) {
+          print('[Chat] Error saving draft on dispose: $e');
+        });
+      }
+    }
+    _messageController.removeListener(_onMessageTextChanged);
     _messageController.dispose();
     _scrollController.dispose();
     // Cancel typing timer and send typing=false if needed
@@ -701,16 +774,19 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> with WidgetsBinding
       appBar: AppBar(
         backgroundColor: theme.cardColor,
         elevation: 0.5,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.primary),
-          onPressed: () {
-            // ✅ Clear active chat BEFORE navigating back
-            _chatStoreRef?.clearActiveChat();
-            FirebaseMessagingService.setContextActiveChatId(null); // ✅ NEW
-            print('[ChatDetailScreen] ✅ clearActiveChat (back button pressed)');
-            Navigator.of(context).pop();
-          },
-        ),
+        leading: widget.embedded
+            ? null
+            : IconButton(
+                icon: const Icon(Icons.arrow_back, color: AppColors.primary),
+                onPressed: () {
+                  // ✅ Clear active chat BEFORE navigating back
+                  _chatStoreRef?.clearActiveChat();
+                  FirebaseMessagingService.setContextActiveChatId(null); // ✅ NEW
+                  print('[ChatDetailScreen] ✅ clearActiveChat (back button pressed)');
+                  Navigator.of(context).pop();
+                },
+              ),
+        automaticallyImplyLeading: !widget.embedded,
         title: GestureDetector(
           onTap: () {
             // ✅ Navigate to user profile when tapping avatar/name
@@ -1401,7 +1477,7 @@ extension _MediaWidgets on _ChatDetailScreenState {
         );
         break;
       case MessageStatus.sent:
-      default:
+      case MessageStatus.delivered:
         child = Icon(
           Icons.done,
           key: const ValueKey('delivered'),

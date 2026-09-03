@@ -110,14 +110,14 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     final contentWidth = width > 520 ? 520.0 : width * 0.94;
-    
+    final themed = ThemedColors.of(context);
+
     return Scaffold(
-      backgroundColor: AppColors.background,
+      // No explicit backgroundColor — see login_screen.dart for why.
       appBar: AppBar(
-        backgroundColor: AppColors.background,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: AppColors.text),
+          icon: Icon(Icons.arrow_back, color: themed.text),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
@@ -148,7 +148,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
                         'Enter your new password below.',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: AppColors.muted,
+                          color: themed.muted,
                         ),
                       ),
                       const SizedBox(height: 32),
@@ -161,7 +161,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
                             _obscurePassword
                                 ? Icons.visibility_off
                                 : Icons.visibility,
-                            color: AppColors.muted,
+                            color: themed.muted,
                           ),
                           onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                         ),
@@ -176,7 +176,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
                             _obscureConfirmPassword
                                 ? Icons.visibility_off
                                 : Icons.visibility,
-                            color: AppColors.muted,
+                            color: themed.muted,
                           ),
                           onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
                         ),

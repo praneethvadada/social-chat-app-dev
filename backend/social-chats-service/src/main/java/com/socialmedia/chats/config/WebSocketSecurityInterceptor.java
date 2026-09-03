@@ -1,5 +1,6 @@
 package com.socialmedia.chats.config;
 
+import com.socialmedia.chats.client.SessionStatusClient;
 import com.socialmedia.chats.security.JwtTokenProvider;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -20,6 +21,7 @@ import java.util.List;
 public class WebSocketSecurityInterceptor implements ChannelInterceptor {
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final SessionStatusClient sessionStatusClient;
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -63,13 +65,28 @@ public class WebSocketSecurityInterceptor implements ChannelInterceptor {
                     System.out.println("[WebSocketSecurityInterceptor] ❌ authHeaders is NULL or EMPTY!");
                 }
 
-                if (token != null && jwtTokenProvider.validateToken(token)) {
+                if (token != null && jwtTokenProvider.validateToken(token)
+                        && !jwtTokenProvider.isTwoFactorChallengeToken(token) && !jwtTokenProvider.isWebSessionConfirmToken(token)) {
                     Long userId = jwtTokenProvider.getUserIdFromToken(token);
+                    String sessionToken = jwtTokenProvider.getSessionIdFromToken(token);
                     System.out.println("[WebSocketSecurityInterceptor] ✅ Token validated, userId: " + userId);
-                    
+
+                    // Phase 5: refuse the handshake outright for an already-revoked
+                    // session (single-active-web-session takeover, remote device
+                    // logout) — no point completing a connection that every
+                    // subsequent frame would then reject anyway.
+                    if (sessionToken != null && !sessionStatusClient.isActive(sessionToken)) {
+                        System.out.println("[WebSocketSecurityInterceptor] ❌ Session revoked, refusing CONNECT: " + sessionToken);
+                        log.warn("[WS] CONNECT refused — session revoked, sid={}", sessionToken);
+                        throw new org.springframework.messaging.MessagingException("Session revoked");
+                    }
+
                     if (userId != null) {
-                        // Store userId in session attributes
+                        // Store userId + sid in session attributes
                         accessor.getSessionAttributes().put("userId", userId);
+                        if (sessionToken != null) {
+                            accessor.getSessionAttributes().put("sid", sessionToken);
+                        }
 
                         // Set a Principal so convertAndSendToUser routes reliably
                         UsernamePasswordAuthenticationToken principal =
@@ -94,10 +111,25 @@ public class WebSocketSecurityInterceptor implements ChannelInterceptor {
                     log.warn("[WS] No/invalid token found in connection headers");
                 }
                 System.out.println("[WebSocketSecurityInterceptor] ===== END CONNECT FRAME =====\n");
+            } catch (org.springframework.messaging.MessagingException e) {
+                throw e; // propagate deliberate CONNECT refusal — do not swallow it below
             } catch (Exception e) {
                 System.out.println("[WebSocketSecurityInterceptor] ❌ EXCEPTION in CONNECT processing: " + e.getMessage());
                 e.printStackTrace();
                 log.error("[WS] Error processing CONNECT", e);
+            }
+        } else if (accessor.getSessionAttributes() != null) {
+            // Phase 5: every frame after CONNECT (SEND, SUBSCRIBE, heartbeats via
+            // the broker relay, etc.) is re-checked against the session that was
+            // active at connect time — cheap thanks to SessionStatusClient's TTL
+            // cache, and this is what makes a mid-session revocation (someone
+            // logs into a new browser right now) take effect within seconds
+            // instead of only on the next reconnect.
+            Object sid = accessor.getSessionAttributes().get("sid");
+            if (sid instanceof String sessionToken && !sessionStatusClient.isActive(sessionToken)) {
+                System.out.println("[WebSocketSecurityInterceptor] ❌ Session revoked mid-connection, rejecting frame: " + sessionToken);
+                log.warn("[WS] Frame rejected — session revoked, sid={}", sessionToken);
+                throw new org.springframework.messaging.MessagingException("Session revoked");
             }
         }
 

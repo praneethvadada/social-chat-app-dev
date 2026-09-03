@@ -2,6 +2,7 @@ package com.socialmedia.auth.controller;
 
 import com.socialmedia.auth.dto.OtpVerifyRequest;
 import com.socialmedia.auth.dto.PasswordResetRequest;
+import com.socialmedia.auth.entity.OtpVerification.Purpose;
 import com.socialmedia.auth.service.AuthService;
 import com.socialmedia.auth.service.OtpService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -56,7 +57,7 @@ public class PasswordResetController {
     public ResponseEntity<Map<String, String>> verifyOtp(
             @Valid @RequestBody OtpVerifyRequest request) {
         try {
-            boolean isValid = otpService.verifyOtp(request.getEmail(), request.getOtp());
+            boolean isValid = otpService.verifyOtp(request.getEmail(), request.getOtp(), Purpose.PASSWORD_RESET);
             if (isValid) {
                 return ResponseEntity.ok(Map.of(
                     "message", "OTP verified successfully. You can now reset your password."
@@ -82,7 +83,7 @@ public class PasswordResetController {
     public ResponseEntity<Map<String, String>> resetPassword(
             @Valid @RequestBody PasswordResetRequest request) {
         try {
-            authService.resetPasswordWithEmail(request.getEmail(), request.getNewPassword());
+            authService.resetPasswordWithEmail(request.getEmail(), request.getOtp(), request.getNewPassword());
             return ResponseEntity.ok(Map.of(
                 "message", "Password has been reset successfully"
             ));
@@ -102,7 +103,7 @@ public class PasswordResetController {
     public ResponseEntity<Map<String, String>> resendOtp(
             @Valid @RequestBody PasswordResetRequest request) {
         try {
-            otpService.resendOtp(request.getEmail());
+            otpService.resendOtp(request.getEmail(), Purpose.PASSWORD_RESET);
             return ResponseEntity.ok(Map.of(
                 "message", "OTP has been resent to your email"
             ));

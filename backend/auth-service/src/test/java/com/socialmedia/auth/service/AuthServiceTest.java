@@ -51,6 +51,10 @@ class AuthServiceTest {
     @Mock private PhoneOtpService phoneOtpService;
     @Mock private PhoneNumberValidator phoneNumberValidator;
     @Mock private IdentifierResolver identifierResolver;
+    @Mock private DeviceSessionService deviceSessionService;
+    @Mock private ActiveWebSessionService activeWebSessionService;
+    @Mock private TwoFactorAuthService twoFactorAuthService;
+    @Mock private SecurityEventService securityEventService;
 
     private AuthService authService;
 
@@ -58,12 +62,22 @@ class AuthServiceTest {
     void setUp() {
         authService = new AuthService(userRepository, passwordEncoder, tokenProvider, redisTemplate,
                 emailService, passwordResetTokenRepository, socialServiceClient, otpService,
-                phoneOtpService, phoneNumberValidator, identifierResolver);
+                phoneOtpService, phoneNumberValidator, identifierResolver, deviceSessionService,
+                activeWebSessionService, twoFactorAuthService, securityEventService);
         // storeRefreshToken() defensively swallows Redis errors; leaving
         // opsForValue() unstubbed (returns null) exercises that same path
         // real local/dev traffic takes today, matching production behavior.
-        lenient().when(tokenProvider.generateAccessToken(any(), any())).thenReturn("access-token");
-        lenient().when(tokenProvider.generateRefreshToken(any(), any())).thenReturn("refresh-token");
+        // deviceSessionService.registerDevice(...) is left unstubbed too —
+        // every test here builds a bare Register/LoginRequest with no
+        // deviceInfo, so it returns null (Mockito's default), which
+        // short-circuits session creation (and therefore
+        // activeWebSessionService.claimOrReplace, which is never reached)
+        // exactly like a real not-yet-updated client would hit in
+        // AuthService. twoFactorAuthService is likewise never invoked here
+        // — every mocked User defaults to twoFactorEnabled=null/false; see
+        // AuthServiceTwoFactorLoginTest for the 2FA-enabled login path.
+        lenient().when(tokenProvider.generateAccessToken(any(), any(), any(), any())).thenReturn("access-token");
+        lenient().when(tokenProvider.generateRefreshToken(any(), any(), any(), any())).thenReturn("refresh-token");
     }
 
     private RegisterRequest baseRequest() {
@@ -82,7 +96,7 @@ class AuthServiceTest {
         request.setEmail(EMAIL);
         when(userRepository.existsByUsername("praneeth")).thenReturn(false);
         when(userRepository.existsByEmail(EMAIL)).thenReturn(false);
-        when(otpService.hasRecentVerification(EMAIL)).thenReturn(true);
+        when(otpService.hasRecentVerification(EMAIL, com.socialmedia.auth.entity.OtpVerification.Purpose.EMAIL_VERIFICATION)).thenReturn(true);
         when(passwordEncoder.encode(anyString())).thenReturn("hashed");
         when(userRepository.save(any(User.class))).thenAnswer(inv -> {
             User u = inv.getArgument(0);
@@ -187,7 +201,7 @@ class AuthServiceTest {
         request.setEmail(EMAIL);
         when(userRepository.existsByUsername("praneeth")).thenReturn(false);
         when(userRepository.existsByEmail(EMAIL)).thenReturn(false);
-        when(otpService.hasRecentVerification(EMAIL)).thenReturn(false);
+        when(otpService.hasRecentVerification(EMAIL, com.socialmedia.auth.entity.OtpVerification.Purpose.EMAIL_VERIFICATION)).thenReturn(false);
 
         AuthApiException ex = assertThrows(AuthApiException.class, () -> authService.register(request));
         assertEquals(AuthApiException.ErrorCode.VERIFICATION_REQUIRED, ex.getErrorCode());

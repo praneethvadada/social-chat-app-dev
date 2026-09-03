@@ -1,9 +1,7 @@
 package com.socialmedia.chats.controller;
 
-import com.socialmedia.chats.dto.ChatMessageDto;
 import com.socialmedia.chats.dto.ChatTypingDto;
 import com.socialmedia.chats.dto.ChatReadDto;
-import com.socialmedia.chats.entity.Message;
 import com.socialmedia.chats.repository.MessageRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -12,7 +10,6 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.time.ZoneId;
 
 @Controller
@@ -21,60 +18,6 @@ public class ChatEventController {
 
     private final SimpMessagingTemplate messagingTemplate;
     private final MessageRepository messageRepository;
-    private final com.socialmedia.chats.service.ConversationService conversationService;
-
-    /**
-     * Handle incoming MESSAGE_SEND events from clients and broadcast MESSAGE_RECEIVED.
-     * Delivery does not depend on REST and broadcast happens immediately. Saving is done after.
-     */
-    @MessageMapping("/message.send")
-    @Transactional
-    public void handleMessageSend(@Payload ChatMessageDto payload) {
-        try {
-            System.out.println("[CHAT] MESSAGE_SEND payload.chatId=" + payload.getChatId()
-                    + " sender=" + payload.getSenderId() + " messageId=" + payload.getMessageId());
-
-            // Build MESSAGE_RECEIVED payload (same fields, type set)
-            ChatMessageDto out = new ChatMessageDto();
-            out.setType("MESSAGE_RECEIVED");
-            out.setChatId(payload.getChatId());
-            out.setSenderId(payload.getSenderId());
-            out.setReceiverId(payload.getReceiverId());
-            out.setContent(payload.getContent());
-            out.setMessageId(payload.getMessageId());
-            out.setTimestamp(payload.getTimestamp() != null ? payload.getTimestamp() : LocalDateTime.now());
-
-            // Broadcast immediately to /topic/chat/{chatId}
-            String dest = "/topic/chat/" + payload.getChatId();
-            messagingTemplate.convertAndSend(dest, out);
-            System.out.println("[CHAT] MESSAGE_RECEIVED broadcast to " + dest + " messageId=" + out.getMessageId());
-
-            // Persist message to DB (after broadcasting)
-            try {
-                Message m = new Message();
-                m.setSenderId(payload.getSenderId());
-                m.setReceiverId(payload.getReceiverId());
-                m.setContent(payload.getContent() == null ? "" : payload.getContent());
-                // store clientMessageId if present so we can correlate optimistic messages
-                m.setClientMessageId(payload.getMessageId());
-                // mediaUrl is not part of this contract right now; ignore
-                // G0: stamp the DIRECT conversation (best-effort)
-                try {
-                    m.setConversationId(conversationService
-                            .findOrCreateDirect(payload.getSenderId(), payload.getReceiverId()).getId());
-                } catch (Exception ce) {
-                    System.out.println("[CHAT] ⚠️ findOrCreateDirect failed: " + ce.getMessage());
-                }
-                Message saved = messageRepository.save(m);
-                System.out.println("[CHAT] MESSAGE_SAVED id=" + saved.getId());
-            } catch (Exception e) {
-                System.out.println("[CHAT] MESSAGE_SAVED failed: " + e.getMessage());
-            }
-
-        } catch (Exception e) {
-            System.out.println("[CHAT] MESSAGE_SEND handler error: " + e.getMessage());
-        }
-    }
 
     /**
      * Typing start: broadcast TYPING_START to /topic/chat/{chatId}

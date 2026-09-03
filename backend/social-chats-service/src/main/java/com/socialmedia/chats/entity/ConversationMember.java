@@ -55,6 +55,18 @@ public class ConversationMember {
     @Column(name = "notification_level", nullable = false, length = 10)
     private NotificationLevel notificationLevel = NotificationLevel.ALL;
 
+    /**
+     * Phase 4: per-conversation sync cursor - the highest {@link Message#getId()}
+     * this member's client has already fetched via /conversations/{id}/sync.
+     * Null means "never synced incrementally" (client should use the regular
+     * paginated history endpoint for its initial load instead).
+     */
+    @Column(name = "last_sync_cursor")
+    private Long lastSyncCursor;
+
+    @Column(name = "last_sync_at")
+    private LocalDateTime lastSyncAt;
+
     @PrePersist
     protected void onCreate() {
         if (joinedAt == null) {

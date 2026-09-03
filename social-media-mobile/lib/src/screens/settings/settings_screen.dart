@@ -10,6 +10,8 @@ import '../../state/app_state_manager.dart';
 import '../../state/chat_store.dart';
 import 'notification_settings_screen.dart';
 import 'privacy_settings_screen.dart';
+import 'security_settings_screen.dart';
+import '../../responsive/breakpoints.dart';
 import '../../services/call_signaling_service.dart';
 import '../../services/firebase_messaging_service.dart';
 import '../../state/call_state_manager.dart';
@@ -23,6 +25,25 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  // Desktop index+detail split (see build()) — which section is showing in
+  // the right-hand pane. 0=Notifications, 1=Privacy, 2=Security, null=none
+  // selected yet. Stays null forever below `isDesktopClass`; mobile/tablet
+  // never reads this, it keeps using plain push navigation.
+  int? _selectedSection;
+
+  void _openSection(BuildContext context, int index) {
+    if (context.isDesktopClass) {
+      setState(() => _selectedSection = index);
+      return;
+    }
+    final screen = switch (index) {
+      0 => const NotificationSettingsScreen(),
+      1 => PrivacySettingsScreen(),
+      _ => const SecuritySettingsScreen(),
+    };
+    Navigator.of(context).push(MaterialPageRoute(builder: (context) => screen));
+  }
+
   @override
   Widget build(BuildContext context) {
     final themeMode = ref.watch(themeModeProvider);
@@ -119,69 +140,111 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
               const Divider(height: 1),
-              const SizedBox(height: 18),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Column(
-                  children: [
-                    _buildTile(
-                      context,
-                      leading: Icons.dark_mode,
-                      title: 'Dark Mode',
-                      subtitle: 'Switch theme',
-                      trailing: Switch.adaptive(
-                        value: isDark,
-                        onChanged: (v) => ref.read(themeModeProvider.notifier).setThemeMode(v ? ThemeMode.dark : ThemeMode.light),
-                        activeColor: primary,
+              if (!context.isDesktopClass) ...[
+                const SizedBox(height: 18),
+                _buildIndexTiles(context, isDark, primary, handleLogout),
+                const SizedBox(height: 12),
+                const Expanded(child: SizedBox()),
+              ] else
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 320,
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.only(top: 18, bottom: 18),
+                          child: _buildIndexTiles(context, isDark, primary, handleLogout),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    _buildTile(
-                      context,
-                      leading: Icons.notifications,
-                      title: 'Notifications',
-                      subtitle: 'Mentions, likes & follows',
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => const NotificationSettingsScreen(),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    _buildTile(
-                      context,
-                      leading: Icons.lock,
-                      title: 'Privacy',
-                      subtitle: 'Account privacy and settings',
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => PrivacySettingsScreen(),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    _buildTile(
-                      context,
-                      leading: Icons.logout,
-                      title: 'Logout',
-                      subtitle: 'Sign out of this device',
-                      iconBgColor: AppColors.danger,
-                      onTap: handleLogout,
-                    ),
-                  ],
+                      const VerticalDivider(width: 1),
+                      Expanded(
+                        child: _selectedSection == null
+                            ? Center(
+                                child: Text('Select a setting',
+                                    style: TextStyle(color: AppColors.mutedSolid, fontSize: 15)),
+                              )
+                            : switch (_selectedSection!) {
+                                0 => const NotificationSettingsScreen(embedded: true),
+                                1 => PrivacySettingsScreen(embedded: true),
+                                _ => const SecuritySettingsScreen(embedded: true),
+                              },
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              const Expanded(child: SizedBox()),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// The Dark Mode / Notifications / Privacy / Security / Logout tile list
+  /// — the "index" half of the desktop split, and the whole thing on
+  /// mobile/tablet.
+  Widget _buildIndexTiles(BuildContext context, bool isDark, Color primary, VoidCallback handleLogout) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Column(
+        children: [
+          _buildTile(
+            context,
+            leading: Icons.dark_mode,
+            title: 'Dark Mode',
+            subtitle: 'Switch theme',
+            trailing: Switch.adaptive(
+              value: isDark,
+              onChanged: (v) async {
+                final userId = await ApiService.getUserId();
+                ref.read(themeModeProvider.notifier).setThemeMode(
+                      v ? ThemeMode.dark : ThemeMode.light,
+                      userId: userId,
+                    );
+              },
+              activeColor: primary,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildTile(
+            context,
+            leading: Icons.notifications,
+            title: 'Notifications',
+            subtitle: 'Mentions, likes & follows',
+            trailing: const Icon(Icons.chevron_right),
+            selected: _selectedSection == 0,
+            onTap: () => _openSection(context, 0),
+          ),
+          const SizedBox(height: 12),
+          _buildTile(
+            context,
+            leading: Icons.lock,
+            title: 'Privacy',
+            subtitle: 'Account privacy and settings',
+            trailing: const Icon(Icons.chevron_right),
+            selected: _selectedSection == 1,
+            onTap: () => _openSection(context, 1),
+          ),
+          const SizedBox(height: 12),
+          _buildTile(
+            context,
+            leading: Icons.security,
+            title: 'Security',
+            subtitle: 'Logged-in devices and account security',
+            trailing: const Icon(Icons.chevron_right),
+            selected: _selectedSection == 2,
+            onTap: () => _openSection(context, 2),
+          ),
+          const SizedBox(height: 12),
+          _buildTile(
+            context,
+            leading: Icons.logout,
+            title: 'Logout',
+            subtitle: 'Sign out of this device',
+            iconBgColor: AppColors.danger,
+            onTap: handleLogout,
+          ),
+        ],
       ),
     );
   }
@@ -193,15 +256,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     Widget? trailing,
     VoidCallback? onTap,
     Color iconBgColor = AppColors.primary,
+    // Desktop index only — highlights whichever section is open in the
+    // detail pane. Always false on mobile/tablet (nothing sets it there).
+    bool selected = false,
   }) {
+    final primary = Theme.of(context).colorScheme.primary;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
+          color: selected ? primary.withValues(alpha: 0.1) : Theme.of(context).cardColor,
           borderRadius: BorderRadius.circular(14),
+          border: selected ? Border.all(color: primary, width: 1.5) : null,
         ),
         child: Row(
           children: [

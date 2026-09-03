@@ -59,6 +59,16 @@ public class User {
     @Column(nullable = false, columnDefinition = "TINYINT(1) DEFAULT 0")
     private Boolean phoneVerified = false;
 
+    // Phase 6: enabling/changing requires proving control of the target
+    // method via a fresh OTP (see TwoFactorAuthService); disabling requires
+    // the current password. method is null whenever enabled is false — the
+    // two are always set together, never independently.
+    @Column(name = "two_factor_enabled", nullable = false, columnDefinition = "TINYINT(1) DEFAULT 0")
+    private Boolean twoFactorEnabled = false;
+
+    @Column(name = "two_factor_method", length = 10)
+    private String twoFactorMethod;
+
     @Column(nullable = false)
     private String password;
     
@@ -243,5 +253,21 @@ public class User {
 
     public void setPhoneVerified(Boolean phoneVerified) {
         this.phoneVerified = phoneVerified;
+    }
+
+    public Boolean getTwoFactorEnabled() {
+        return twoFactorEnabled;
+    }
+
+    public void setTwoFactorEnabled(Boolean twoFactorEnabled) {
+        this.twoFactorEnabled = twoFactorEnabled;
+    }
+
+    public String getTwoFactorMethod() {
+        return twoFactorMethod;
+    }
+
+    public void setTwoFactorMethod(String twoFactorMethod) {
+        this.twoFactorMethod = twoFactorMethod;
     }
 }

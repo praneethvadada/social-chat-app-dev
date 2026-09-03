@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 
 import '../../models/group.dart';
+import '../../responsive/desktop_content_wrapper.dart';
 import '../../services/api_service.dart';
 import '../../services/group_api.dart';
 import 'group_chat_screen.dart';
@@ -126,7 +127,9 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: DesktopContentWrapper(
+        maxWidth: 640,
+        child: Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -213,6 +216,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
             ),
           ),
         ],
+      ),
       ),
     );
   }

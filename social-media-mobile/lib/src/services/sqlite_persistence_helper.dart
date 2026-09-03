@@ -84,6 +84,13 @@ class SQLitePersistenceHelper {
         createdAt: message.createdAt.millisecondsSinceEpoch,
         readAt: message.readAt?.millisecondsSinceEpoch,  // ✅ FIXED: Persist actual readAt
         status: _statusToString(message.status),
+        // Previously dropped on the floor — a media message reloaded after
+        // an app restart had no attachment reference at all.
+        mediaUrl: message.mediaUrl,
+        mediaType: message.mediaType,
+        mediaName: message.mediaName,
+        replyToMessageId: message.replyToMessageId,
+        isDeleted: message.isDeleted,
       );
 
       _repo.insertMessage(sqliteMsg);
@@ -194,6 +201,8 @@ class SQLitePersistenceHelper {
         return 'SENDING';
       case MessageStatus.sent:
         return 'SENT';
+      case MessageStatus.delivered:
+        return 'DELIVERED';
       case MessageStatus.read:
         return 'READ';
       case MessageStatus.uploading:

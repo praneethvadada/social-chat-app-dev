@@ -30,7 +30,12 @@ public class AuthApiException extends RuntimeException {
         ACCOUNT_DISABLED,
         ACCOUNT_LOCKED,
         VERIFICATION_REQUIRED,
-        INVALID_SIGNUP_IDENTIFIER
+        INVALID_SIGNUP_IDENTIFIER,
+        MOBILE_ONLY_FEATURE,
+        DEVICE_UNKNOWN,
+        TWO_FA_NOT_ENABLED,
+        INVALID_PASSWORD,
+        INVALID_2FA_METHOD
     }
 
     private final ErrorCode errorCode;

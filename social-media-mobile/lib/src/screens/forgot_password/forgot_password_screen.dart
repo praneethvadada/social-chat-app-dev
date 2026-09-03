@@ -100,14 +100,14 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     final contentWidth = width > 520 ? 520.0 : width * 0.94;
-    
+    final themed = ThemedColors.of(context);
+
     return Scaffold(
-      backgroundColor: AppColors.background,
+      // No explicit backgroundColor — see login_screen.dart for why.
       appBar: AppBar(
-        backgroundColor: AppColors.background,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: AppColors.text),
+          icon: Icon(Icons.arrow_back, color: themed.text),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
@@ -138,7 +138,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
                         'Enter your email address and we\'ll send you a verification code to reset your password.',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: AppColors.muted,
+                          color: themed.muted,
                         ),
                       ),
                       const SizedBox(height: 32),

@@ -8,6 +8,16 @@ public class AuthResponse {
     private String username;
     private String email;
     private String fullName;
+    /**
+     * Backend-assigned Device row id (distinct from the client's own
+     * generated UUID deviceId string) — added so the client can tell
+     * account-wide broadcasts like session.revoked/local_storage.revoked
+     * apart: those payloads carry THIS numeric id, which the client
+     * previously had no way to compare itself against. Null if device info
+     * wasn't sent (deviceInfo omitted, or a platform that failed to
+     * register for some reason).
+     */
+    private Long deviceId;
 
     public AuthResponse() {}
 
@@ -39,4 +49,6 @@ public class AuthResponse {
     public void setEmail(String email) { this.email = email; }
     public String getFullName() { return fullName; }
     public void setFullName(String fullName) { this.fullName = fullName; }
+    public Long getDeviceId() { return deviceId; }
+    public void setDeviceId(Long deviceId) { this.deviceId = deviceId; }
 }

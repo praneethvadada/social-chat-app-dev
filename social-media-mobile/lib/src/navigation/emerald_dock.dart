@@ -6,6 +6,7 @@ import '../screens/create_post/create_event_screen.dart';
 import '../components/create_note_dialog.dart';
 import '../state/app_state_manager.dart';
 import '../theme/colors.dart';
+import 'nav_items.dart';
 
 /// Emerald Luxe floating dock — a pill-shaped floating bar (not a full-width
 /// Material bottom bar) with two tabs on each side and a raised circular
@@ -25,15 +26,10 @@ class EmeraldDock extends ConsumerWidget {
   });
 
   // Matches the reference's dock exactly: [Pulse, Discover] | [Connect, Me],
-  // split around the center FAB. Indices match MainTab's declared order.
-  static const _left = <_DockItemData>[
-    _DockItemData(icon: Icons.show_chart_rounded, label: 'Pulse', index: 0),
-    _DockItemData(icon: Icons.explore_rounded, label: 'Discover', index: 1),
-  ];
-  static const _right = <_DockItemData>[
-    _DockItemData(icon: Icons.chat_bubble_rounded, label: 'Connect', index: 2),
-    _DockItemData(icon: Icons.person_rounded, label: 'Me', index: 3),
-  ];
+  // split around the center FAB. Sourced from the shared `primaryNavItems`
+  // (see nav_items.dart) so the desktop rail/sidebar can't drift from this.
+  static final _left = primaryNavItems.sublist(0, 2);
+  static final _right = primaryNavItems.sublist(2, 4);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -47,7 +43,7 @@ class EmeraldDock extends ConsumerWidget {
     final mutedFg = isDark ? AppColors.mutedSolid : AppColorsLight.muted;
     const onAccent = AppColors.onAccent;
 
-    Widget dockButton(_DockItemData item) {
+    Widget dockButton(NavItemData item) {
       final active = item.index == currentIndex;
       final badge = item.index == 2 && connectBadgeCount > 0;
       return GestureDetector(
@@ -159,6 +155,20 @@ class EmeraldDock extends ConsumerWidget {
   }
 
   void _openCreateSheet(BuildContext context, WidgetRef ref) {
+    showCreateSheet(context, ref, onNavigateToConnect: () => onTap(2));
+  }
+
+  /// Public + static so the desktop nav rail/sidebar (`AppNavRail`, which
+  /// has no dock instance to call `onTap` on) can open the exact same
+  /// "Create something" sheet as the mobile dock's "+" button, instead of a
+  /// second copy of this UI. [onNavigateToConnect] is the "Message" option's
+  /// action — the dock passes its own `onTap(2)`, the rail passes its own
+  /// tab-switch callback.
+  static void showCreateSheet(
+    BuildContext context,
+    WidgetRef ref, {
+    required VoidCallback onNavigateToConnect,
+  }) {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
@@ -230,7 +240,7 @@ class EmeraldDock extends ConsumerWidget {
                       label: 'Message',
                       onTap: () {
                         Navigator.of(ctx).pop();
-                        onTap(2); // Connect tab
+                        onNavigateToConnect();
                       },
                     ),
                     _CreateOption(
@@ -280,11 +290,4 @@ class _CreateOption extends StatelessWidget {
       ),
     );
   }
-}
-
-class _DockItemData {
-  final IconData icon;
-  final String label;
-  final int index;
-  const _DockItemData({required this.icon, required this.label, required this.index});
 }

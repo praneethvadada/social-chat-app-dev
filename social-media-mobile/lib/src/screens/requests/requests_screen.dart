@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../components/avatar_initial.dart';
 import '../../services/api_service.dart';
 import '../user_profile_screen.dart';
+import '../../responsive/desktop_content_wrapper.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
 class RequestsScreen extends ConsumerStatefulWidget {
@@ -76,6 +77,8 @@ class _RequestsScreenState extends ConsumerState<RequestsScreen> {
         title: Text('Follow Requests', style: TextStyle(color: primary, fontSize: 20, fontWeight: FontWeight.w800)),
       ),
       body: SafeArea(
+        child: DesktopContentWrapper(
+        maxWidth: 640,
         child: _loading
             ? const Center(child: CircularProgressIndicator())
             : _error != null
@@ -181,6 +184,7 @@ class _RequestsScreenState extends ConsumerState<RequestsScreen> {
                           );
                         },
                       ),
+        ),
       ),
     );
   }

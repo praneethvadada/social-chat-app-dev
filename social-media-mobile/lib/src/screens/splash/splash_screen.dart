@@ -65,8 +65,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    final themed = ThemedColors.of(context);
     return Scaffold(
-      backgroundColor: AppColors.background,
+      // No explicit backgroundColor — see login_screen.dart for why.
       body: SafeArea(
         child: Center(
           child: FadeTransition(
@@ -77,9 +78,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: AppColors.accentSubtle100,
+                    color: themed.accentSubtle100,
                     shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.border),
+                    border: Border.all(color: themed.border),
                   ),
                   child: const AppLogo(size: 88),
                 ),
@@ -87,7 +88,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                 Text(
                   'SOCIAL CHAT',
                   style: TextStyle(
-                    color: AppColors.text,
+                    color: themed.text,
                     fontWeight: FontWeight.w700,
                     fontSize: 14,
                     letterSpacing: 4,

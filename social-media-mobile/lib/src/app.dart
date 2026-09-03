@@ -57,7 +57,7 @@ class MyApp extends ConsumerWidget {
               _buildAuthScreen(ref.watch(appStateProvider)),
               // Modal screens stack on top
               if (openModal != ModalScreen.none)
-                _buildModalScreen(openModal, ref),
+                _buildModalScreen(context, openModal, ref),
               // Minimized call overlay widgets (spread into Stack as direct children)
               if (showMinimizedOverlay)
                 ...buildMinimizedCallOverlay(
@@ -111,17 +111,45 @@ class MyApp extends ConsumerWidget {
     }
   }
 
-  /// Build modal screens that appear on top of authenticated content
-  Widget _buildModalScreen(ModalScreen modal, WidgetRef ref) {
+  /// Build modal screens that appear on top of authenticated content.
+  ///
+  /// Below 1024px: today's exact behaviour — a full-bleed sheet over a dark
+  /// scrim. At 1024px+: per the design reference ("Notifications is a full
+  /// screen on mobile and a 560px panel inside the desktop shell — not a
+  /// stretched list"), the same content renders inside a capped, centred,
+  /// rounded panel over a lighter scrim instead of taking the whole window.
+  Widget _buildModalScreen(BuildContext context, ModalScreen modal, WidgetRef ref) {
     print('[MyApp] 📱 Opening modal: $modal');
-    
+
+    final width = MediaQuery.of(context).size.width;
+    final isDesktopPanel = width >= 1024;
+
+    final content = _buildModalContent(modal);
+
     return GestureDetector(
       onTap: () => ref.read(appStateProvider.notifier).closeModal(),
       child: Material(
-        color: Colors.black.withAlpha(102), // Semi-transparent dark overlay
-        child: GestureDetector(
-          onTap: () {}, // Prevent closing when tapping the screen content
-          child: _buildModalContent(modal),
+        color: Colors.black.withAlpha(isDesktopPanel ? 64 : 102),
+        child: Center(
+          child: GestureDetector(
+            onTap: () {}, // Prevent closing when tapping the screen content
+            child: isDesktopPanel
+                ? ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: 560,
+                      maxHeight: MediaQuery.of(context).size.height * 0.86,
+                    ),
+                    child: Material(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: BorderRadius.circular(20),
+                      clipBehavior: Clip.antiAlias,
+                      elevation: 16,
+                      shadowColor: Colors.black45,
+                      child: content,
+                    ),
+                  )
+                : SizedBox.expand(child: content),
+          ),
         ),
       ),
     );

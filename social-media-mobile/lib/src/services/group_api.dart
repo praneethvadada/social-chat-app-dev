@@ -81,6 +81,24 @@ class GroupApi {
         .toList();
   }
 
+  /// Phase 4: incremental catch-up since [cursor] (a previously-returned
+  /// message id). Works for both DIRECT and GROUP conversations - both carry
+  /// a real conversationId. [cursor] must be a positive id; a conversation
+  /// with no prior cursor should use [fetchMessages]/[ApiService.getConversation]
+  /// for its one-time initial load instead, then start syncing from there.
+  static Future<ConversationSyncResult> sync(int conversationId, int cursor,
+      {int limit = 200}) async {
+    final response = await http.get(
+      Uri.parse('$_base/$conversationId/sync?cursor=$cursor&limit=$limit'),
+      headers: await _headers(),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to sync conversation (${response.statusCode})');
+    }
+    return ConversationSyncResult.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   // ---------------- G2: roles & member management ----------------
 
   static Future<List<GroupMember>> fetchMembers(int conversationId) async {

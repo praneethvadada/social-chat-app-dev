@@ -11,6 +11,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.PrePersist;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -20,7 +21,14 @@ import lombok.NoArgsConstructor;
 @Table(name = "messages", indexes = {
     @Index(name = "idx_sender_receiver", columnList = "senderId,receiverId"),
     @Index(name = "idx_receiver_read", columnList = "receiverId,isRead")
-})
+},
+    uniqueConstraints = {
+        // Phase 4: makes a retried offline send idempotent at the DB level, not
+        // just app-level - MySQL permits unlimited NULLs through a unique index,
+        // so rows without a clientMessageId (none expected from the current
+        // client, but not enforced elsewhere) are unaffected.
+        @UniqueConstraint(name = "uk_sender_client_message_id", columnNames = {"senderId", "clientMessageId"})
+    })
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

@@ -1,5 +1,6 @@
 package com.socialmedia.social.config;
 
+import com.socialmedia.social.client.SessionStatusClient;
 import com.socialmedia.social.security.JwtTokenProvider;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -21,26 +22,38 @@ import java.util.Collections;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider tokenProvider;
+    private final SessionStatusClient sessionStatusClient;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        
+
         try {
             String jwt = getJwtFromRequest(request);
             System.out.println("[JWT FILTER] Request path: " + request.getRequestURI());
             System.out.println("[JWT FILTER] JWT token present: " + (jwt != null));
-            
-            if (StringUtils.hasText(jwt) && tokenProvider.validateToken(jwt)) {
+
+            if (StringUtils.hasText(jwt) && tokenProvider.validateToken(jwt)
+                    && !tokenProvider.isTwoFactorChallengeToken(jwt) && !tokenProvider.isWebSessionConfirmToken(jwt)) {
                 Long userId = tokenProvider.getUserIdFromToken(jwt);
+                String sessionToken = tokenProvider.getSessionIdFromToken(jwt);
                 System.out.println("[JWT FILTER] Token valid, userId: " + userId);
-                
-                UsernamePasswordAuthenticationToken authentication = 
-                    new UsernamePasswordAuthenticationToken(userId, null, 
+
+                // Phase 5: a session revoked at auth-service (single-active-web-
+                // session takeover, remote device logout) must stop working here
+                // too, not just at auth-service/chats-service.
+                if (sessionToken != null && !sessionStatusClient.isActive(sessionToken)) {
+                    System.out.println("[JWT FILTER] Session revoked, refusing to authenticate: " + sessionToken);
+                    filterChain.doFilter(request, response);
+                    return;
+                }
+
+                UsernamePasswordAuthenticationToken authentication =
+                    new UsernamePasswordAuthenticationToken(userId, null,
                         Collections.singletonList(new SimpleGrantedAuthority("ROLE_USER")));
-                
+
                 SecurityContextHolder.getContext().setAuthentication(authentication);
-                
+
                 request.setAttribute("userId", userId);
                 System.out.println("[JWT FILTER] Authentication set for userId: " + userId);
             } else {

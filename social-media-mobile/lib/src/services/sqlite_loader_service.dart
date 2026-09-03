@@ -34,6 +34,13 @@ class SQLiteLoaderService {
 
       // For each conversation, load its messages
       for (final conv in conversations) {
+        // GROUP rows use otherUserId=0 as a sentinel (see ChatSyncService's
+        // own doc comment) and GroupChatScreen doesn't consume ChatStore at
+        // all — feeding a GROUP row through this DIRECT-shaped loader would
+        // show up as a bogus "chat with user 0". Skip; group messages stay
+        // in local SQLite as a durable offline cache but aren't loaded into
+        // ChatStore until/unless GroupChatScreen is wired to read from it.
+        if (conv.conversationType == 'GROUP') continue;
         final otherUserId = conv.otherUserId;
 
         // Get messages for this conversation
@@ -52,7 +59,13 @@ class SQLiteLoaderService {
             senderProfilePic: (sqliteMsg.senderId == otherUserId) ? conv.otherUserProfilePic : null,
             recipientId: sqliteMsg.receiverId,
             content: sqliteMsg.content,
-            mediaUrl: null,
+            // Previously hardcoded null — an offline-cached media message
+            // rendered as if it had no attachment at all after a reload.
+            mediaUrl: sqliteMsg.mediaUrl,
+            mediaType: sqliteMsg.mediaType,
+            mediaName: sqliteMsg.mediaName,
+            replyToMessageId: sqliteMsg.replyToMessageId,
+            isDeleted: sqliteMsg.isDeleted,
             status: _stringToMessageStatus(sqliteMsg.status),
             createdAt:
                 DateTime.fromMillisecondsSinceEpoch(sqliteMsg.createdAt),
@@ -96,13 +109,27 @@ class SQLiteLoaderService {
     }
   }
 
-  /// Convert SQLite status string to MessageStatus enum
+  /// Convert SQLite status string to MessageStatus enum.
+  ///
+  /// 'PENDING' is handled here as an alias for MessageStatus.sending — it's
+  /// what MessageQueueService historically wrote for offline-queued
+  /// messages, a different literal than the 'SENDING' every other write
+  /// path uses for the exact same "not yet acknowledged by server" state.
+  /// Before this fix, an offline-queued message reloaded after an app
+  /// restart fell through to the `default` case and silently rendered as
+  /// already SENT — a real bug (an unsent message shown as sent). Kept
+  /// here as a defensive alias in case any old rows still have the
+  /// 'PENDING' literal on disk; MessageQueueService itself now writes
+  /// 'SENDING' directly (see database Phase 2 notes).
   MessageStatus _stringToMessageStatus(String status) {
     switch (status.toUpperCase()) {
       case 'SENDING':
+      case 'PENDING':
         return MessageStatus.sending;
       case 'SENT':
         return MessageStatus.sent;
+      case 'DELIVERED':
+        return MessageStatus.delivered;
       case 'READ':
         return MessageStatus.read;
       case 'FAILED':

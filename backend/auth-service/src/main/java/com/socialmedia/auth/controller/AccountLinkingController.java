@@ -1,6 +1,7 @@
 package com.socialmedia.auth.controller;
 
 import com.socialmedia.auth.dto.OtpVerifyRequest;
+import com.socialmedia.auth.entity.OtpVerification.Purpose;
 import com.socialmedia.auth.exception.AuthApiException;
 import com.socialmedia.auth.service.AuthService;
 import com.socialmedia.auth.service.OtpService;
@@ -57,7 +58,7 @@ public class AccountLinkingController {
                     "Authentication required", HttpStatus.UNAUTHORIZED);
         }
 
-        boolean verified = otpService.verifyOtp(request.getEmail(), request.getOtp());
+        boolean verified = otpService.verifyOtp(request.getEmail(), request.getOtp(), Purpose.EMAIL_VERIFICATION);
         if (!verified) {
             throw new AuthApiException(AuthApiException.ErrorCode.OTP_INVALID,
                     "Invalid or expired OTP", HttpStatus.BAD_REQUEST);

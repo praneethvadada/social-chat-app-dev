@@ -8,6 +8,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../models/group.dart';
 import '../../services/api_service.dart';
 import '../../services/group_api.dart';
+import '../../responsive/desktop_content_wrapper.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
 /// G2: group info - profile, members grouped by role, and role/member actions
@@ -686,7 +687,9 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
               ),
           ],
         ),
-        body: _loading
+        body: DesktopContentWrapper(
+        maxWidth: 640,
+        child: _loading
             ? const Center(child: CircularProgressIndicator())
             : ListView(
                 children: [
@@ -810,6 +813,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                   const SizedBox(height: 24),
                 ],
               ),
+        ),
       ),
     );
   }

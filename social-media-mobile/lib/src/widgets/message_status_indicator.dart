@@ -37,7 +37,9 @@ class MessageStatusIndicator extends StatelessWidget {
         );
 
       case MessageStatus.sent:
-        // ✓ Single gray tick for "sent"
+      case MessageStatus.delivered:
+        // ✓ Single gray tick — delivered renders the same as sent for now
+        // (no distinct delivered-to-device signal from the server yet).
         return Padding(
           padding: const EdgeInsets.only(left: 4.0),
           child: Text(
@@ -90,6 +92,7 @@ String getMessageStatusText(MessageStatus status) {
     case MessageStatus.sending:
       return 'Sending...';
     case MessageStatus.sent:
+    case MessageStatus.delivered:
       return 'Sent';
     case MessageStatus.read:
       return 'Read';
@@ -116,6 +119,7 @@ Widget getMessageStatusIcon(MessageStatus status, {Color? color}) {
       );
 
     case MessageStatus.sent:
+    case MessageStatus.delivered:
       return Icon(Icons.check, size: 14, color: finalColor);
 
     case MessageStatus.read:

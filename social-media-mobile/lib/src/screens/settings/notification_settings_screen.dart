@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class NotificationSettingsScreen extends StatefulWidget {
-  const NotificationSettingsScreen({super.key});
+  /// True when shown as the detail pane of the desktop Settings
+  /// index+detail split (`SettingsScreen`) instead of pushed as its own
+  /// route — hides the back arrow, which would have nothing to pop.
+  final bool embedded;
+  const NotificationSettingsScreen({super.key, this.embedded = false});
 
   @override
   State<NotificationSettingsScreen> createState() => _NotificationSettingsScreenState();
@@ -47,6 +51,7 @@ class _NotificationSettingsScreenState extends State<NotificationSettingsScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: !widget.embedded,
         title: const Text('Notification Settings'),
       ),
       body: ListView(
