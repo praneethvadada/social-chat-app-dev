@@ -381,21 +381,45 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                                 if (context.isDesktopClass)
                                   Padding(
                                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                                    child: GridView.builder(
-                                      shrinkWrap: true,
-                                      physics: const NeverScrollableScrollPhysics(),
-                                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                        crossAxisCount: context.hasContextPanel ? 4 : 2,
-                                        mainAxisSpacing: 14,
-                                        crossAxisSpacing: 14,
-                                        childAspectRatio: 0.92,
-                                      ),
-                                      itemCount: _suggested.length,
-                                      itemBuilder: (c, i) => _PersonCard(
-                                        user: _suggested[i],
-                                        onOpenProfile: _openProfile,
-                                        expand: true,
-                                      ),
+                                    child: LayoutBuilder(
+                                      builder: (context, constraints) {
+                                        // `context.hasContextPanel` reads the
+                                        // OUTER viewport width, which is wrong
+                                        // here: this screen can also render
+                                        // inside a width-capped modal panel
+                                        // (opened via the search icon at
+                                        // 1024px+ — see app.dart's
+                                        // _buildModalScreen, capped ~560px),
+                                        // where the real available width is
+                                        // far narrower than the viewport.
+                                        // Found live: a 1440px-wide viewport
+                                        // still forced 4 columns inside that
+                                        // 560px panel, and childAspectRatio's
+                                        // implied row height (sized for 4
+                                        // columns' worth of width) was too
+                                        // short for 2-column-width content,
+                                        // overflowing for real. Measuring the
+                                        // actual local width, and using a
+                                        // fixed row height instead of a
+                                        // width-derived one, fixes both.
+                                        final crossAxisCount = constraints.maxWidth >= 700 ? 4 : 2;
+                                        return GridView.builder(
+                                          shrinkWrap: true,
+                                          physics: const NeverScrollableScrollPhysics(),
+                                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                            crossAxisCount: crossAxisCount,
+                                            mainAxisSpacing: 14,
+                                            crossAxisSpacing: 14,
+                                            mainAxisExtent: 216,
+                                          ),
+                                          itemCount: _suggested.length,
+                                          itemBuilder: (c, i) => _PersonCard(
+                                            user: _suggested[i],
+                                            onOpenProfile: _openProfile,
+                                            expand: true,
+                                          ),
+                                        );
+                                      },
                                     ),
                                   )
                                 else
@@ -423,21 +447,25 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                                 ),
                                 Padding(
                                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                                  child: GridView.builder(
-                                    shrinkWrap: true,
-                                    physics: const NeverScrollableScrollPhysics(),
-                                    // 2-up on mobile/tablet, 4-up once the
-                                    // panel itself is wide enough to hold
-                                    // four tiles at a readable size — matches
-                                    // the design reference's discovery grid.
-                                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: context.hasContextPanel ? 4 : 2,
-                                      mainAxisSpacing: 14,
-                                      crossAxisSpacing: 14,
-                                      childAspectRatio: 0.78,
-                                    ),
-                                    itemCount: _explorePosts.length,
-                                    itemBuilder: (c, i) => _CreatorTile(post: _explorePosts[i]),
+                                  child: LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      // Local width, not the outer viewport —
+                                      // see the matching comment on the
+                                      // "People to know" grid above.
+                                      final crossAxisCount = constraints.maxWidth >= 700 ? 4 : 2;
+                                      return GridView.builder(
+                                        shrinkWrap: true,
+                                        physics: const NeverScrollableScrollPhysics(),
+                                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: crossAxisCount,
+                                          mainAxisSpacing: 14,
+                                          crossAxisSpacing: 14,
+                                          childAspectRatio: 0.78,
+                                        ),
+                                        itemCount: _explorePosts.length,
+                                        itemBuilder: (c, i) => _CreatorTile(post: _explorePosts[i]),
+                                      );
+                                    },
                                   ),
                                 ),
                               ],

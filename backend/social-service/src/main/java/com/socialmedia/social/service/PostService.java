@@ -4,6 +4,7 @@ import com.socialmedia.social.dto.HashtagResponse;
 import com.socialmedia.social.dto.PollOptionResponse;
 import com.socialmedia.social.dto.PostRequest;
 import com.socialmedia.social.dto.PostResponse;
+import com.socialmedia.social.dto.VoterSummary;
 import com.socialmedia.social.entity.EventRsvp;
 import com.socialmedia.social.entity.PollOption;
 import com.socialmedia.social.entity.PollVote;
@@ -128,6 +129,67 @@ public class PostService {
             pollVoteRepository.save(vote);
         }
         return mapToResponse(post, userId);
+    }
+
+    /**
+     * Who voted for what, grouped by option id. Anyone who can already see
+     * the poll post can see this — same rule as the feed's own visibility
+     * filter (owner, or PUBLIC, or a close friend if CLOSE_FRIENDS), plus
+     * the block check every other single-post read already applies. Poll
+     * votes were always tracked per-user (needed to prevent double-voting
+     * and to compute "myPollVoteOptionId") — this just exposes what was
+     * already being stored, so aggregate percentages aren't the only thing
+     * visible.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Map<Long, List<VoterSummary>> getPollVoters(Long postId, Long userId) {
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new RuntimeException("Post not found"));
+        if (post.getPostType() != PostType.POLL) {
+            throw new RuntimeException("This post is not a poll");
+        }
+        if (blockService.isEitherBlocked(userId, post.getUserId()) || !isPostVisibleToUser(post, userId)) {
+            throw new RuntimeException("Cannot view this post");
+        }
+        return groupVotersByKey(pollVoteRepository.findByPostId(postId), PollVote::getOptionId);
+    }
+
+    /** Same idea as {@link #getPollVoters}, grouped by RSVP status instead. */
+    @Transactional(readOnly = true)
+    public java.util.Map<String, List<VoterSummary>> getEventRsvps(Long postId, Long userId) {
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new RuntimeException("Post not found"));
+        if (post.getPostType() != PostType.EVENT) {
+            throw new RuntimeException("This post is not an event");
+        }
+        if (blockService.isEitherBlocked(userId, post.getUserId()) || !isPostVisibleToUser(post, userId)) {
+            throw new RuntimeException("Cannot view this post");
+        }
+        return groupVotersByKey(eventRsvpRepository.findByPostId(postId), rsvp -> rsvp.getStatus().name());
+    }
+
+    private <T, K> java.util.Map<K, List<VoterSummary>> groupVotersByKey(
+            List<T> rows, java.util.function.Function<T, K> keyOf) {
+        java.util.Map<K, List<Long>> userIdsByKey = new java.util.LinkedHashMap<>();
+        for (T row : rows) {
+            Long rowUserId = row instanceof PollVote ? ((PollVote) row).getUserId() : ((EventRsvp) row).getUserId();
+            userIdsByKey.computeIfAbsent(keyOf.apply(row), k -> new ArrayList<>()).add(rowUserId);
+        }
+        List<Long> allUserIds = userIdsByKey.values().stream().flatMap(List::stream).distinct().collect(Collectors.toList());
+        java.util.Map<Long, UserProfile> profilesById = allUserIds.isEmpty()
+                ? java.util.Collections.emptyMap()
+                : userProfileRepository.findByUserIdIn(allUserIds).stream()
+                        .collect(Collectors.toMap(UserProfile::getUserId, p -> p));
+        java.util.Map<K, List<VoterSummary>> result = new java.util.LinkedHashMap<>();
+        for (var entry : userIdsByKey.entrySet()) {
+            List<VoterSummary> voters = entry.getValue().stream()
+                    .map(profilesById::get)
+                    .filter(java.util.Objects::nonNull)
+                    .map(p -> new VoterSummary(p.getUserId(), p.getUsername(), p.getFullName(), p.getProfilePictureUrl()))
+                    .collect(Collectors.toList());
+            result.put(entry.getKey(), voters);
+        }
+        return result;
     }
 
     @Transactional

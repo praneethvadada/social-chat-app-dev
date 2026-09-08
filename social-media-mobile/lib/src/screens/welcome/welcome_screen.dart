@@ -54,7 +54,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                   const AppLogo(size: 110),
                   const SizedBox(height: 28),
                   Text(
-                    'Welcome to Social Chat',
+                    'Welcome to Revolution Chat',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                           fontWeight: FontWeight.w700,

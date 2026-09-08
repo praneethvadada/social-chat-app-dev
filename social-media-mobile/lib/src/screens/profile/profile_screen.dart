@@ -293,7 +293,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> with AutomaticKee
   Future<void> _shareProfile() async {
     if (_username.isEmpty) return;
     final link = '${ApiConfig.webDomain}/u/$_username';
-    await Share.share('Check out my profile on SocialChat: $link', subject: '$_fullName on SocialChat');
+    await Share.share('Check out my profile on Revolution Chat: $link', subject: '$_fullName on Revolution Chat');
   }
 
   Future<void> _changeCoverPhoto() async {

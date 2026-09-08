@@ -11,7 +11,11 @@ class MediaService {
   static Future<String> uploadMedia(SelectedMedia media, void Function(double) onProgress) async {
     try {
       onProgress(0.3);
-      final url = await ApiService.uploadImage(media.file.path);
+      // If the user explicitly cropped this image, upload the crop result
+      // instead of the original file — see SelectedMedia.croppedBytes.
+      final url = media.croppedBytes != null
+          ? await ApiService.uploadImageBytes(media.croppedBytes!)
+          : await ApiService.uploadImage(media.file.path);
       onProgress(1.0);
       return url;
     } catch (e) {

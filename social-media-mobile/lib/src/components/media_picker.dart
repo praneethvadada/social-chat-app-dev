@@ -9,8 +9,14 @@ import '../services/media_service.dart';
 class MediaPicker {
   final ImagePicker _picker = ImagePicker();
 
-  Future<List<SelectedMedia>> pickImages() async {
-    final List<XFile>? files = await _picker.pickMultiImage(imageQuality: 85);
+  static const int maxImagesPerPost = 20;
+
+  /// [limit] caps how many the OS picker itself will let the user select in
+  /// this one picking session — pass the number of slots actually still
+  /// free (maxImagesPerPost minus what's already selected) so repeated
+  /// "add more" picks can't push the post's total past the cap.
+  Future<List<SelectedMedia>> pickImages({int? limit}) async {
+    final List<XFile>? files = await _picker.pickMultiImage(imageQuality: 85, limit: limit);
     if (files == null) return [];
     final out = <SelectedMedia>[];
     for (final f in files) {

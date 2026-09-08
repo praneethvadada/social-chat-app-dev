@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import '../../config/api_config.dart';
 import '../../models/post.dart';
 import '../../components/post_actions_widget.dart';
+import '../../components/post_card.dart' show PollBlock, EventBlock;
 import '../fullscreen_media/fullscreen_image_viewer.dart';
 import '../fullscreen_media/fullscreen_video_player.dart';
 import '../user_profile_screen.dart';
@@ -16,6 +17,8 @@ import '../create_post/create_post_screen.dart';
 import '../../utils/time_utils.dart';
 import '../../state/saved_posts_notifier.dart';
 import '../../responsive/desktop_content_wrapper.dart';
+import '../../components/natural_image.dart';
+import '../../components/post_media_carousel.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
 class PostDetailScreen extends ConsumerStatefulWidget {
@@ -141,34 +144,42 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                 ),
               ),
 
-            // Post Media
+            // Poll / Event block — found missing entirely while wiring up
+            // the poll/RSVP voters feature: this screen rendered plain
+            // content text for a POLL or EVENT post with no options, vote
+            // bars, or RSVP buttons at all. Reuses the exact same widgets
+            // the feed's PostCard uses, not a second implementation.
+            if (widget.post.postType == PostType.POLL)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: PollBlock(post: widget.post),
+              ),
+            if (widget.post.postType == PostType.EVENT)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: EventBlock(post: widget.post),
+              ),
+
+            // Post Media — PostMediaCarousel handles 1 image (natural
+            // aspect ratio, no cap issue) same as before, or 2+ (swipeable,
+            // "1/N" counter) — was hardcoded to imageUrls.first only,
+            // silently dropping every image after the first on a
+            // multi-image post.
             if (hasMedia)
-              GestureDetector(
-                onTap: () {
-                  if (isVideo) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => FullscreenVideoPlayer(
-                          videoUrl: mediaUrl!,
-                        ),
-                      ),
-                    );
-                  } else {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => FullscreenImageViewer(
-                          imageUrl: mediaUrl!,
-                        ),
-                      ),
-                    );
-                  }
-                },
-                child: Container(
-                  width: double.infinity,
-                  constraints: const BoxConstraints(maxHeight: 400),
-                  child: _MediaDisplay(url: mediaUrl!),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: PostMediaCarousel(
+                  urls: widget.post.imageUrls,
+                  maxHeight: 500,
+                  videoThumbnailBuilder: (url) => _MediaDisplay(url: url),
+                  onTapImage: (url) => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => FullscreenImageViewer(imageUrl: url)),
+                  ),
+                  onTapVideo: (url) => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => FullscreenVideoPlayer(videoUrl: url)),
+                  ),
                 ),
               ),
 
@@ -228,7 +239,12 @@ class _MediaDisplay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (_isVideo) {
-      return FutureBuilder<Uint8List?>(
+      // Unchanged (moved in from the old call-site wrapper, same 400px
+      // cap) — this feature request is about image display only.
+      return SizedBox(
+        width: double.infinity,
+        height: 400,
+        child: FutureBuilder<Uint8List?>(
         future: VideoThumbnail.thumbnailData(
           video: url,
           imageFormat: ImageFormat.JPEG,
@@ -268,46 +284,19 @@ class _MediaDisplay extends StatelessWidget {
             ],
           );
         },
+        ),
       );
     }
 
-    String imageUrl = url;
-
-    return Image.network(
-      imageUrl,
-      fit: BoxFit.cover,
-      width: double.infinity,
-      loadingBuilder: (context, child, loadingProgress) {
-        if (loadingProgress == null) return child;
-        return Center(
-          child: CircularProgressIndicator(
-            value: loadingProgress.expectedTotalBytes != null
-                ? loadingProgress.cumulativeBytesLoaded /
-                    loadingProgress.expectedTotalBytes!
-                : null,
-          ),
-        );
-      },
-      errorBuilder: (context, error, stackTrace) {
-        return Container(
-          color: AppColors.border,
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.broken_image, size: 48, color: AppColors.mutedSolid),
-                const SizedBox(height: 8),
-                Text(
-                  'Image not available',
-                  style: TextStyle(color: AppColors.mutedSolid),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+    // Image: natural aspect ratio, never force-cropped/stretched — was a
+    // fixed-400px BoxFit.cover box before. maxHeight is a generous safety
+    // cap, not a crop (see NaturalImage's own doc comment).
+    return NaturalImage(
+      provider: NetworkImage(url),
+      maxHeight: 500,
     );
   }
+
 }
 
 // PopupMenuButton for post detail screen (must be outside of any class)

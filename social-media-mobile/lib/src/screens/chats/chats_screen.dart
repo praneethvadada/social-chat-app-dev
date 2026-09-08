@@ -850,7 +850,18 @@ class _ChatsScreenState extends State<ChatsScreen>
                                   crossAxisCount: crossAxisCount,
                                   mainAxisSpacing: 12,
                                   crossAxisSpacing: 12,
-                                  childAspectRatio: crossAxisCount == 1 ? 5.4 : 2.6,
+                                  // A fixed row height, not a width-based aspect
+                                  // ratio: the tile's content (44px avatar +
+                                  // 13px padding top/bottom = 70px, regardless
+                                  // of how wide the tile is) doesn't shrink
+                                  // with the column, but an aspect ratio's
+                                  // implied height did — at the desktop
+                                  // Connect split view's ~268px-wide list
+                                  // column this collapsed to ~50px and
+                                  // overflowed for real (found live, with
+                                  // real group data). mainAxisExtent keeps the
+                                  // row a constant height at any width.
+                                  mainAxisExtent: 76,
                                 ),
                                 itemCount: _groups.length,
                                 itemBuilder: (context, i) {
@@ -893,6 +904,8 @@ class _ChatsScreenState extends State<ChatsScreen>
                                                     style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
                                                 const SizedBox(height: 2),
                                                 Text('${g.memberCount} members',
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
                                                     style: TextStyle(fontSize: 11, color: AppColors.mutedSolid)),
                                               ],
                                             ),

@@ -9,8 +9,11 @@ import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.UUID;
 
 @Service
@@ -19,6 +22,7 @@ import java.util.UUID;
 public class S3StorageService {
 
     private final S3Client s3Client;
+    private final S3Presigner s3Presigner;
 
     @Value("${aws.s3.bucket-name}")
     private String bucketName;
@@ -108,5 +112,28 @@ public class S3StorageService {
             return fileUrl.substring(fileUrl.lastIndexOf("/") + 1);
         }
         return fileUrl;
+    }
+
+    /** True for any URL this service itself would have generated for this bucket. */
+    public boolean isS3Url(String url) {
+        if (url == null || url.isEmpty()) return false;
+        String prefix = String.format("https://%s.s3.%s.amazonaws.com/", bucketName, region);
+        return url.startsWith(prefix);
+    }
+
+    /**
+     * Turns a raw S3 URL into a short-lived signed one — required now that
+     * the bucket itself is private (Block Public Access on): a raw URL
+     * would just 403 for any client. See S3UrlPresigningAdvice, which
+     * calls this on every outgoing response automatically rather than
+     * requiring each controller/service to remember to call it.
+     */
+    public String presign(String fileUrl) {
+        String key = extractFileNameFromUrl(fileUrl);
+        GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
+                .signatureDuration(Duration.ofHours(1))
+                .getObjectRequest(b -> b.bucket(bucketName).key(key))
+                .build();
+        return s3Presigner.presignGetObject(presignRequest).url().toString();
     }
 }

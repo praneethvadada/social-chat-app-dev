@@ -189,7 +189,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> with SingleTickerPr
                           const AppLogo(size: 92),
                           const SizedBox(height: 18),
                           Text(
-                            'SocialChat',
+                            'Revolution Chat',
                             style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: AppColors.primary, fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(height: 6),

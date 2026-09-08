@@ -81,7 +81,7 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
-        <!-- AWS S3 for file storage -->
+        <!-- AWS S3 for file storage (S3Presigner ships bundled in this same artifact) -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>s3</artifactId>

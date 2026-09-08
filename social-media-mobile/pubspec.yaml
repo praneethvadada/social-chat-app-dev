@@ -16,6 +16,10 @@ dependencies:
   flutter_riverpod: ^2.3.6
   provider: ^6.0.0
   image_picker: any
+  # Used directly (not just transitively via image_picker) for
+  # XFile.readAsBytes() — the one file-read operation that works
+  # identically on mobile and web, unlike dart:io's File.
+  cross_file: any
   video_player: any
   flutter_image_compress: any
   fluttertoast: any
@@ -68,6 +72,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/images/logo.webp
     - assets/images/logo.png
     - assets/images/logo.ico
     - assets/sounds/

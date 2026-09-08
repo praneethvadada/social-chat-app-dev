@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,8 +17,10 @@ import '../../services/post_service.dart';
 import '../../services/api_service.dart';
 import '../../models/user_search.dart';
 import '../../components/tag_people_dialog.dart';
+import '../../components/natural_image.dart';
 import '../../state/app_state_manager.dart';
 import '../../responsive/desktop_content_wrapper.dart';
+import '../chats/chat_image_editor.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
 class CreatePostScreen extends ConsumerStatefulWidget {
@@ -207,6 +210,153 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
     return parts[0][0].toUpperCase();
   }
 
+  /// The "how it'll look in the post" preview + Crop button — shown only
+  /// on demand, in a bottom sheet opened from a thumbnail's own edit icon
+  /// (see MediaPreviewCarousel's onEdit), not automatically for every pick.
+  Future<void> _showPreviewSheet(SelectedMedia m) async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => DraggableScrollableSheet(
+          initialChildSize: 0.75,
+          minChildSize: 0.4,
+          maxChildSize: 0.95,
+          expand: false,
+          builder: (context, scrollController) => Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).scaffoldBackgroundColor,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: SingleChildScrollView(
+              controller: scrollController,
+              padding: const EdgeInsets.all(16),
+              child: _buildPreviewContent(
+                Theme.of(context),
+                m,
+                // Re-render this sheet in place after a crop lands, so the
+                // preview updates without needing to close and reopen it.
+                onCropped: () => setSheetState(() {}),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPreviewContent(ThemeData theme, SelectedMedia m, {VoidCallback? onCropped}) {
+    if (m.type == MediaType.video) {
+      return GestureDetector(
+        onTap: () => showDialog(context: context, builder: (_) => VideoPreviewDialog(file: m.file)),
+        child: Container(
+          height: 220,
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(16), color: AppColors.surface2),
+          alignment: Alignment.center,
+          child: const Icon(Icons.play_circle_fill, size: 56, color: Colors.white70),
+        ),
+      );
+    }
+
+    return FutureBuilder<Uint8List>(
+      // Keying on croppedBytes (via the future's identity is fine since
+      // FutureBuilder reruns when the *future itself* changes, and
+      // onCropped forces this whole subtree to rebuild) picks up a fresh
+      // crop immediately.
+      future: loadSelectedMediaBytes(m),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return Container(
+            height: 220,
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(16), color: AppColors.surface2),
+            alignment: Alignment.center,
+            child: const CircularProgressIndicator(),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            NaturalImage(
+              // Bytes identity changes on crop, so the widget correctly
+              // re-resolves and re-measures instead of showing a stale frame.
+              provider: MemoryImage(snapshot.data!),
+              maxHeight: 420,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            const SizedBox(height: 6),
+            TextButton.icon(
+              onPressed: () async {
+                await _openCropper(m);
+                onCropped?.call();
+              },
+              icon: const Icon(Icons.crop, size: 18),
+              label: Text(m.croppedBytes != null ? 'Edit crop' : 'Crop'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Opt-in only — per spec, nothing is ever cropped unless the user
+  /// explicitly asks for it here. `ChatImageEditor` is a generic
+  /// bytes-in/bytes-out cropper (despite the name — built for chat
+  /// attachments originally, nothing chat-specific in it) via the
+  /// `crop_your_image` package, reused rather than duplicated.
+  Future<void> _openCropper(SelectedMedia m) async {
+    final bytes = await loadSelectedMediaBytes(m);
+    if (!mounted) return;
+    final cropped = await Navigator.of(context).push<Uint8List>(
+      MaterialPageRoute(builder: (_) => ChatImageEditor(imageBytes: bytes)),
+    );
+    if (cropped != null && mounted) {
+      setState(() {
+        final idx = _selected.indexWhere((e) => e.id == m.id);
+        if (idx != -1) _selected[idx] = _selected[idx].copyWith(croppedBytes: cropped);
+      });
+    }
+  }
+
+  /// How many more photos/videos this post can still take before hitting
+  /// the cap. Never negative — clamped so a post that's somehow already at
+  /// or past the limit (shouldn't happen, but defensive) just reads as 0.
+  int get _remainingMediaSlots =>
+      (MediaPicker.maxImagesPerPost - _selected.length).clamp(0, MediaPicker.maxImagesPerPost);
+
+  void _showMediaLimitReached() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('You can add up to ${MediaPicker.maxImagesPerPost} photos/videos per post')),
+    );
+  }
+
+  /// Shared by every "pick multiple images" entry point (the bottom sheet
+  /// and the Photo action pill) — passes the *remaining* slot count to the
+  /// OS picker itself (so a single picking session can't alone exceed the
+  /// cap) and shows a clear message if there's no room left at all.
+  Future<void> _pickAndAddImages() async {
+    if (_remainingMediaSlots <= 0) {
+      _showMediaLimitReached();
+      return;
+    }
+    final items = await _mediaPicker.pickImages(limit: _remainingMediaSlots);
+    if (items.isEmpty || !mounted) return;
+    setState(() => _selected.addAll(items));
+  }
+
+  /// Shared by every "add one item" entry point (pick/take video, take
+  /// photo) — same cap, checked before the OS picker even opens.
+  Future<void> _addSingleMedia(Future<SelectedMedia?> Function() picker) async {
+    if (_remainingMediaSlots <= 0) {
+      _showMediaLimitReached();
+      return;
+    }
+    final item = await picker();
+    if (item == null || !mounted) return;
+    setState(() => _selected.add(item));
+  }
+
   Future<void> _openPickerSheet() async {
     showModalBottomSheet(
       context: context,
@@ -218,8 +368,7 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
               title: const Text('Pick Photos'),
               onTap: () async {
                 Navigator.of(c).pop();
-                final items = await _mediaPicker.pickImages();
-                if (items.isNotEmpty) setState(() => _selected.addAll(items));
+                await _pickAndAddImages();
               },
             ),
             ListTile(
@@ -227,8 +376,7 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
               title: const Text('Pick Video'),
               onTap: () async {
                 Navigator.of(c).pop();
-                final item = await _mediaPicker.pickVideo();
-                if (item != null) setState(() => _selected.add(item));
+                await _addSingleMedia(_mediaPicker.pickVideo);
               },
             ),
             ListTile(
@@ -236,8 +384,7 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
               title: const Text('Take Photo'),
               onTap: () async {
                 Navigator.of(c).pop();
-                final item = await _mediaPicker.takePhoto();
-                if (item != null) setState(() => _selected.add(item));
+                await _addSingleMedia(_mediaPicker.takePhoto);
               },
             ),
             ListTile(
@@ -245,8 +392,7 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
               title: const Text('Take Video'),
               onTap: () async {
                 Navigator.of(c).pop();
-                final item = await _mediaPicker.takeVideo();
-                if (item != null) setState(() => _selected.add(item));
+                await _addSingleMedia(_mediaPicker.takeVideo);
               },
             ),
             ListTile(
@@ -622,28 +768,41 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
                       ),
                     ),
                   ),
-                GestureDetector(
-                  onTap: _openPickerSheet,
-                  child: DottedBox(
-                    child: SizedBox(
-                      height: 140,
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.cloud_upload,
-                                size: 36,
-                                color: theme.iconTheme.color?.withValues(alpha: 0.5)),
-                            const SizedBox(height: 8),
-                            Text('Add photos or videos',
-                                style: TextStyle(
-                                    color: theme.textTheme.bodyMedium?.color)),
-                          ],
+                if (_selected.isEmpty)
+                  GestureDetector(
+                    onTap: _openPickerSheet,
+                    child: DottedBox(
+                      child: SizedBox(
+                        height: 140,
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.cloud_upload,
+                                  size: 36,
+                                  color: theme.iconTheme.color?.withValues(alpha: 0.5)),
+                              const SizedBox(height: 8),
+                              Text('Add photos or videos',
+                                  style: TextStyle(
+                                      color: theme.textTheme.bodyMedium?.color)),
+                            ],
+                          ),
                         ),
                       ),
                     ),
+                  )
+                else
+                  // Thumbnails only, by default — the full "how it'll look
+                  // in the post" preview + Crop button live behind each
+                  // thumbnail's own edit icon (see MediaPreviewCarousel's
+                  // onEdit), not shown automatically for every pick.
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(
+                      '${_selected.length} ${_selected.length == 1 ? 'item' : 'items'} selected — tap ✎ on one to preview or crop',
+                      style: TextStyle(color: AppColors.mutedSolid, fontSize: 12.5),
+                    ),
                   ),
-                ),
 
                 const SizedBox(height: 12),
 
@@ -658,7 +817,11 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
                           context: context,
                           builder: (_) => VideoPreviewDialog(file: m.file));
                     }
+                    // Images: no action on a plain tap — preview/crop lives
+                    // behind the explicit edit icon below (onEdit), not the
+                    // thumbnail itself.
                   },
+                  onEdit: (m) => _showPreviewSheet(m),
                 ),
 
                 const SizedBox(height: 18),
@@ -669,19 +832,12 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
                     ActionPill(
                         label: 'Photo',
                         color: AppColors.accentSubtle100,
-                        onTap: () async {
-                          final items = await _mediaPicker.pickImages();
-                          if (items.isNotEmpty)
-                            setState(() => _selected.addAll(items));
-                        }),
+                        onTap: _pickAndAddImages),
                     const SizedBox(width: 8),
                     ActionPill(
                         label: 'Video',
                         color: AppColors.accentSubtle100,
-                        onTap: () async {
-                          final item = await _mediaPicker.pickVideo();
-                          if (item != null) setState(() => _selected.add(item));
-                        }),
+                        onTap: () => _addSingleMedia(_mediaPicker.pickVideo)),
                     const SizedBox(width: 8),
                     ActionPill(
                         label: 'Tag',

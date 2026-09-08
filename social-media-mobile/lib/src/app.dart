@@ -46,7 +46,7 @@ class MyApp extends ConsumerWidget {
         print('[MyApp] 🔍 isMinimized=$isMinimized, callState=$callState, showMinimizedOverlay=$showMinimizedOverlay');
         
         return MaterialApp(
-          title: 'Social Chat App',
+          title: 'Revolution Chat',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,

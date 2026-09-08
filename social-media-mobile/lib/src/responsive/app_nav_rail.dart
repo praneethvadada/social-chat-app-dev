@@ -179,7 +179,7 @@ class _Wordmark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(
-      'SocialChat',
+      'RChat',
       style: TextStyle(
         fontSize: 16,
         fontWeight: FontWeight.w800,

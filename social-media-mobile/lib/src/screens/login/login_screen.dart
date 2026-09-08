@@ -424,7 +424,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> with SingleTickerProv
                         const SizedBox(height: 8),
                         const AppLogo(size: 86),
                         const SizedBox(height: 12),
-                        Text('SocialChat', style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: AppColors.primary, fontWeight: FontWeight.w700)),
+                        Text('Revolution Chat', style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: AppColors.primary, fontWeight: FontWeight.w700)),
                         const SizedBox(height: 8),
                         Text('Connect with friends and share moments', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: themed.muted)),
                         const SizedBox(height: 22),

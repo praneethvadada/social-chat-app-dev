@@ -29,7 +29,7 @@ class FriendlyError {
     if (error is SocketException || error is HttpException) {
       return const FriendlyError(
         'No connection',
-        "We can't reach SocialChat right now. Check your internet connection "
+        "We can't reach Revolution Chat right now. Check your internet connection "
             'and try again.',
         Icons.wifi_off_rounded,
       );
@@ -55,7 +55,7 @@ class FriendlyError {
         text.contains('connection reset')) {
       return const FriendlyError(
         'No connection',
-        "We can't reach SocialChat right now. Check your internet connection "
+        "We can't reach Revolution Chat right now. Check your internet connection "
             'and try again.',
         Icons.wifi_off_rounded,
       );

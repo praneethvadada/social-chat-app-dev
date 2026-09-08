@@ -21,6 +21,9 @@ import '../utils/post_timestamp_widget.dart';
 import '../state/saved_posts_notifier.dart';
 import '../theme/colors.dart';
 import 'mentionable_text.dart';
+import 'squircle_avatar.dart';
+import 'natural_image.dart';
+import 'post_media_carousel.dart';
 
 /// Reference-style "kind" label — Poll/Event take priority (they're an
 /// explicit backend type), otherwise Photo/Video/Note is derived from what
@@ -191,49 +194,25 @@ class _PostCardState extends ConsumerState<PostCard> with SingleTickerProviderSt
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (widget.post.imageUrls.isNotEmpty)
-                  Stack(
-                    children: [
-                      ClipRRect(
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                        child: GestureDetector(
-                          onTap: () {
-                            final url = widget.post.imageUrls.first;
-                            final isVideo = url.endsWith('.mp4') ||
-                                url.endsWith('.webm') ||
-                                url.endsWith('.mov');
-
-                            if (isVideo) {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => FullscreenVideoPlayer(
-                                    videoUrl: url,
-                                  ),
-                                ),
-                              );
-                            } else {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => FullscreenImageViewer(
-                                    imageUrl: url,
-                                  ),
-                                ),
-                              );
-                            }
-                          },
-                          child: _MediaDisplay(url: widget.post.imageUrls.first),
-                        ),
-                      ),
-                      Positioned(
-                        top: 14,
-                        left: 14,
-                        child: _KindBadge(kind: _postKind(widget.post)),
-                      ),
-                    ],
-                  ),
+                // Author identity always comes first, media (if any) below
+                // it — was the other way around before, which read as
+                // anonymous-until-you-scroll-past-the-photo.
                 _PostHeader(post: widget.post, showKindBadge: widget.post.imageUrls.isEmpty),
+                if (widget.post.imageUrls.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                    child: PostMediaCarousel(
+                      urls: widget.post.imageUrls,
+                      maxHeight: 500,
+                      borderRadius: BorderRadius.circular(16),
+                      topLeftBadge: _KindBadge(kind: _postKind(widget.post)),
+                      videoThumbnailBuilder: (url) => _MediaDisplay(url: url),
+                      onTapImage: (url) => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => FullscreenImageViewer(imageUrl: url)),
+                      ),
+                    ),
+                  ),
                 if (widget.post.content.isNotEmpty)
                   Padding(
                     padding:
@@ -244,12 +223,12 @@ class _PostCardState extends ConsumerState<PostCard> with SingleTickerProviderSt
                 if (widget.post.postType == PostType.POLL)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-                    child: _PollBlock(post: widget.post),
+                    child: PollBlock(post: widget.post),
                   ),
                 if (widget.post.postType == PostType.EVENT)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-                    child: _EventBlock(post: widget.post),
+                    child: EventBlock(post: widget.post),
                   ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
@@ -357,21 +336,35 @@ class _MediaDisplayState extends State<_MediaDisplay> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap: _isVideo ? () => _openVideoPlayer(context) : null,
-      child: Container(
-        height: 240,
-        margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: AppColors.surface2,
+    if (_isVideo) {
+      // Video thumbnails are unchanged — this feature request is about
+      // image display only.
+      return GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => _openVideoPlayer(context),
+        child: Container(
+          height: 240,
+          margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            color: AppColors.surface2,
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: _buildVideoThumbnail(),
+          ),
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: _isVideo ? _buildVideoThumbnail() : _buildImage(),
-        ),
-      ),
+      );
+    }
+    // Images: natural aspect ratio, never force-cropped/stretched — was a
+    // fixed 240px BoxFit.cover box before, which crops every non-240-ratio
+    // image. maxHeight is a generous safety cap (500px), not a crop —
+    // ordinary photos never hit it, it only guards against a pathological
+    // panoramic image blowing out the feed's layout.
+    return NaturalImage(
+      provider: NetworkImage(widget.url),
+      maxHeight: 500,
+      borderRadius: BorderRadius.circular(16),
     );
   }
 
@@ -420,46 +413,6 @@ class _MediaDisplayState extends State<_MediaDisplay> {
     );
   }
 
-  Widget _buildImage() {
-    // S3 URLs are already complete, use them directly
-    String imageUrl = widget.url;
-    
-    return Image.network(
-      imageUrl,
-      fit: BoxFit.cover,
-      width: double.infinity,
-      loadingBuilder: (context, child, loadingProgress) {
-        if (loadingProgress == null) return child;
-        return Center(
-          child: CircularProgressIndicator(
-            value: loadingProgress.expectedTotalBytes != null
-                ? loadingProgress.cumulativeBytesLoaded /
-                    loadingProgress.expectedTotalBytes!
-                : null,
-          ),
-        );
-      },
-      errorBuilder: (context, error, stackTrace) {
-                debugPrint('Image load error: $error');
-                return Container(
-                  color: AppColors.surface2,
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.broken_image, size: 48, color: AppColors.mutedSolid),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Image not available',
-                          style: const TextStyle(color: AppColors.mutedSolid),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-      },
-    );
-  }
 }
 
 class _PostHeader extends ConsumerStatefulWidget {
@@ -670,16 +623,19 @@ class _PostHeaderState extends ConsumerState<_PostHeader> {
 
 
 /// Poll content block — options with vote-share bars; tapping an option
-/// casts (or changes) the current user's vote.
-class _PollBlock extends ConsumerStatefulWidget {
+/// casts (or changes) the current user's vote. Public (not `_PollBlock`)
+/// so `PostDetailScreen` can reuse it too — it used to render nothing for
+/// POLL/EVENT posts at all, a real gap found while wiring up the poll/RSVP
+/// voters feature.
+class PollBlock extends ConsumerStatefulWidget {
   final Post post;
-  const _PollBlock({required this.post});
+  const PollBlock({super.key, required this.post});
 
   @override
-  ConsumerState<_PollBlock> createState() => _PollBlockState();
+  ConsumerState<PollBlock> createState() => _PollBlockState();
 }
 
-class _PollBlockState extends ConsumerState<_PollBlock> {
+class _PollBlockState extends ConsumerState<PollBlock> {
   bool _voting = false;
 
   Future<void> _vote(int optionId) async {
@@ -741,6 +697,27 @@ class _PollBlockState extends ConsumerState<_PollBlock> {
                 totalVotes == 0 ? 'No votes yet' : '$totalVotes ${totalVotes == 1 ? 'vote' : 'votes'}',
                 style: TextStyle(color: AppColors.mutedSolid, fontSize: 12),
               ),
+              // Anyone who can see this poll post can see who picked what —
+              // not just the aggregate share each option shows. Shown
+              // whenever there's at least one vote, regardless of whether
+              // the viewer has voted themselves.
+              if (totalVotes > 0) ...[
+                const SizedBox(width: 8),
+                Text('·', style: TextStyle(color: AppColors.mutedSolid, fontSize: 12)),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => showVotersSheet(
+                    context,
+                    title: 'Who voted',
+                    sections: [
+                      for (final o in post.pollOptions) VoterSectionSpec(key: '${o.id}', label: o.text),
+                    ],
+                    loader: () => ApiService.getPollVoters(post.id),
+                  ),
+                  child: Text('See who voted',
+                      style: TextStyle(color: primary, fontSize: 12, fontWeight: FontWeight.w700)),
+                ),
+              ],
               if (correctOption != null) ...[
                 const SizedBox(width: 8),
                 Text('·', style: TextStyle(color: AppColors.mutedSolid, fontSize: 12)),
@@ -852,16 +829,18 @@ class _PollOptionRow extends StatelessWidget {
   }
 }
 
-/// Event content block — date/time, location, and RSVP buttons.
-class _EventBlock extends ConsumerStatefulWidget {
+/// Event content block — date/time, location, and RSVP buttons. Public
+/// (not `_EventBlock`) so `PostDetailScreen` can reuse it — see the
+/// matching note on [PollBlock].
+class EventBlock extends ConsumerStatefulWidget {
   final Post post;
-  const _EventBlock({required this.post});
+  const EventBlock({super.key, required this.post});
 
   @override
-  ConsumerState<_EventBlock> createState() => _EventBlockState();
+  ConsumerState<EventBlock> createState() => _EventBlockState();
 }
 
-class _EventBlockState extends ConsumerState<_EventBlock> {
+class _EventBlockState extends ConsumerState<EventBlock> {
   bool _rsvping = false;
 
   Future<void> _rsvp(String status) async {
@@ -958,7 +937,210 @@ class _EventBlockState extends ConsumerState<_EventBlock> {
               _rsvpButton('NOT_GOING', "Can't go", Icons.close_rounded),
             ],
           ),
+          if (post.eventRsvpCounts.values.fold<int>(0, (a, b) => a + b) > 0) ...[
+            const SizedBox(height: 8),
+            // Same idea as the poll's "See who voted" — anyone who can see
+            // this event post can see who RSVP'd with what, not just counts.
+            GestureDetector(
+              onTap: () => showVotersSheet(
+                context,
+                title: "Who's coming",
+                sections: const [
+                  VoterSectionSpec(key: 'GOING', label: 'Going'),
+                  VoterSectionSpec(key: 'INTERESTED', label: 'Interested'),
+                  VoterSectionSpec(key: 'NOT_GOING', label: "Can't go"),
+                ],
+                loader: () => ApiService.getEventRsvpVoters(post.id),
+              ),
+              child: Text('See who’s responded',
+                  style: TextStyle(color: theme.colorScheme.primary, fontSize: 12, fontWeight: FontWeight.w700)),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// One group in the voters sheet — a poll option or an RSVP status.
+/// [key] matches a key in the map the loader resolves to (poll: option id
+/// as a string; event: the RSVP status name).
+class VoterSectionSpec {
+  final String key;
+  final String label;
+  const VoterSectionSpec({required this.key, required this.label});
+}
+
+/// Shared "who picked what" bottom sheet for both polls and events — every
+/// user with access to the post can see this, not just the aggregate
+/// counts/percentages shown inline. Used by both [_PollBlock] and
+/// [_EventBlock]; kept here rather than duplicated since the two are
+/// otherwise identical (fetch a `{key: [voters]}` map, render one section
+/// per key with at least one voter, tap a voter to open their profile).
+void showVotersSheet(
+  BuildContext context, {
+  required String title,
+  required List<VoterSectionSpec> sections,
+  required Future<Map<String, List<Map<String, dynamic>>>> Function() loader,
+}) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => _VotersSheet(title: title, sections: sections, loader: loader),
+  );
+}
+
+class _VotersSheet extends StatefulWidget {
+  final String title;
+  final List<VoterSectionSpec> sections;
+  final Future<Map<String, List<Map<String, dynamic>>>> Function() loader;
+  const _VotersSheet({required this.title, required this.sections, required this.loader});
+
+  @override
+  State<_VotersSheet> createState() => _VotersSheetState();
+}
+
+class _VotersSheetState extends State<_VotersSheet> {
+  late Future<Map<String, List<Map<String, dynamic>>>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.loader();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DraggableScrollableSheet(
+      initialChildSize: 0.6,
+      minChildSize: 0.3,
+      maxChildSize: 0.9,
+      expand: false,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: BoxDecoration(
+            color: theme.scaffoldBackgroundColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(color: theme.dividerColor, borderRadius: BorderRadius.circular(999)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(widget.title,
+                          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
+                  future: _future,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Text('Could not load this',
+                            style: TextStyle(color: AppColors.mutedSolid)),
+                      );
+                    }
+                    final byKey = snapshot.data ?? {};
+                    final nonEmptySections =
+                        widget.sections.where((s) => (byKey[s.key] ?? const []).isNotEmpty).toList();
+                    if (nonEmptySections.isEmpty) {
+                      return Center(
+                        child: Text('No responses yet',
+                            style: TextStyle(color: AppColors.mutedSolid)),
+                      );
+                    }
+                    return ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                      children: [
+                        for (final section in nonEmptySections) ...[
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12, bottom: 6),
+                            child: Text(
+                              '${section.label} (${byKey[section.key]!.length})',
+                              style: TextStyle(
+                                  color: AppColors.mutedSolid,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1.1),
+                            ),
+                          ),
+                          for (final voter in byKey[section.key]!) _VoterRow(voter: voter),
+                        ],
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _VoterRow extends StatelessWidget {
+  final Map<String, dynamic> voter;
+  const _VoterRow({required this.voter});
+
+  @override
+  Widget build(BuildContext context) {
+    final userId = voter['userId'] is int ? voter['userId'] as int : int.tryParse('${voter['userId']}') ?? 0;
+    final username = voter['username']?.toString() ?? '';
+    final fullName = voter['fullName']?.toString().isNotEmpty == true ? voter['fullName'].toString() : username;
+    final avatarUrl = voter['profilePictureUrl']?.toString();
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () {
+        Navigator.of(context).pop();
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => UserProfileScreen(userId: userId, userName: username)),
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            SquircleAvatar(
+              size: 40,
+              imageUrl: avatarUrl,
+              initials: fullName.isNotEmpty ? fullName[0].toUpperCase() : '?',
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(fullName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  if (username.isNotEmpty)
+                    Text('@$username', style: TextStyle(color: AppColors.mutedSolid, fontSize: 12)),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

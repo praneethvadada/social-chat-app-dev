@@ -1,4 +1,4 @@
 class MockService {
   MockService._();
-  static String getAppName() => 'Social Chat';
+  static String getAppName() => 'Revolution Chat';
 }

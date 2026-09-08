@@ -105,6 +105,22 @@ public class PostController {
         return ResponseEntity.ok(postService.rsvpEvent(postId, status, userId));
     }
 
+    /** Who voted for what, grouped by option id — not just the aggregate counts. */
+    @GetMapping("/{postId}/vote/voters")
+    public ResponseEntity<Map<Long, List<com.socialmedia.social.dto.VoterSummary>>> getPollVoters(
+            @PathVariable Long postId,
+            @RequestAttribute("userId") Long userId) {
+        return ResponseEntity.ok(postService.getPollVoters(postId, userId));
+    }
+
+    /** Who RSVP'd with what status, grouped — the event equivalent of poll voters. */
+    @GetMapping("/{postId}/rsvp/voters")
+    public ResponseEntity<Map<String, List<com.socialmedia.social.dto.VoterSummary>>> getEventRsvps(
+            @PathVariable Long postId,
+            @RequestAttribute("userId") Long userId) {
+        return ResponseEntity.ok(postService.getEventRsvps(postId, userId));
+    }
+
     @GetMapping("/hashtags/trending")
     public ResponseEntity<List<HashtagResponse>> getTrendingHashtags(
             @RequestParam(defaultValue = "10") int limit) {

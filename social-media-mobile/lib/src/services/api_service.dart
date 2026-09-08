@@ -1,6 +1,8 @@
 // ...existing code...
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -693,15 +695,33 @@ class ApiService {
   }
 
   static Future<String> uploadImage(String filePath) async {
+    // MultipartFile.fromPath needs dart:io, which doesn't exist on Flutter
+    // Web — it throws "Unsupported operation" there every time (found
+    // live: the picked file's blob: URL got this far as a plain String,
+    // then failed here). XFile.readAsBytes() is the one operation that
+    // works identically on every platform (real file on mobile, browser
+    // Blob API on web), so route through it instead of touching dart:io
+    // directly.
+    final pickedFile = XFile(filePath);
+    final bytes = await pickedFile.readAsBytes();
+    return uploadImageBytes(bytes, filename: pickedFile.name);
+  }
+
+  /// Same upload, for when the caller already has bytes in hand (e.g. the
+  /// output of the create-post crop tool) rather than a file path — avoids
+  /// a pointless write-to-temp-file-then-read-it-back round trip, and is
+  /// the only option at all on web, where cropped bytes have nowhere to be
+  /// written as a "file".
+  static Future<String> uploadImageBytes(Uint8List bytes, {String filename = 'image.jpg'}) async {
     final token = await getToken();
     if (token == null) throw Exception('Not authenticated');
 
-    print('\n========== UPLOADING FILE ==========');
-    print('File path: $filePath');
+    print('\n========== UPLOADING FILE (bytes) ==========');
+    print('Byte length: ${bytes.length}, filename: $filename');
 
     final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/social/files/upload'));
     request.headers['Authorization'] = 'Bearer $token';
-    request.files.add(await http.MultipartFile.fromPath('file', filePath));
+    request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
 
     final streamedResponse = await request.send();
     final response = await http.Response.fromStream(streamedResponse);
@@ -866,6 +886,44 @@ class ApiService {
       return Post.fromJson(json.decode(response.body) as Map<String, dynamic>);
     }
     final message = _extractErrorMessage(response, 'Failed to RSVP (code ${response.statusCode})');
+    throw Exception(message);
+  }
+
+  /// Who voted for what on a poll, keyed by option id (as a string, since
+  /// that's how JSON object keys always come back) — not just the
+  /// aggregate percentages `pollOptions` already carries. Raw maps rather
+  /// than a dedicated model, matching how other lightweight secondary data
+  /// (e.g. Discover's trending/suggested) is handled in this codebase.
+  static Future<Map<String, List<Map<String, dynamic>>>> getPollVoters(int postId) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+    final response = await http.get(
+      Uri.parse('$baseUrl/social/posts/$postId/vote/voters'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode == 200) {
+      final decoded = json.decode(response.body) as Map<String, dynamic>;
+      return decoded.map((key, value) =>
+          MapEntry(key, (value as List).cast<Map<String, dynamic>>()));
+    }
+    final message = _extractErrorMessage(response, 'Failed to load voters (code ${response.statusCode})');
+    throw Exception(message);
+  }
+
+  /// Same idea as [getPollVoters], keyed by RSVP status (GOING/INTERESTED/NOT_GOING).
+  static Future<Map<String, List<Map<String, dynamic>>>> getEventRsvpVoters(int postId) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+    final response = await http.get(
+      Uri.parse('$baseUrl/social/posts/$postId/rsvp/voters'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode == 200) {
+      final decoded = json.decode(response.body) as Map<String, dynamic>;
+      return decoded.map((key, value) =>
+          MapEntry(key, (value as List).cast<Map<String, dynamic>>()));
+    }
+    final message = _extractErrorMessage(response, 'Failed to load RSVPs (code ${response.statusCode})');
     throw Exception(message);
   }
 
