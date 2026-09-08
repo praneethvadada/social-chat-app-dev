@@ -11,8 +11,9 @@ sms.twilio.account-sid=
 sms.twilio.auth-token=
 sms.twilio.from-number=
 
-# Gmail SMTP credentials — a Gmail address and an App Password (not your
-# regular account password; generate one at myaccount.google.com/apppasswords).
-# Needed for welcome/password-reset/OTP emails to actually send.
+# Hostinger webmail SMTP credentials (host/port default to
+# smtp.hostinger.com:465 in application.properties — only the mailbox
+# username/password need to go here). Needed for welcome/password-reset/OTP
+# emails to actually send.
 spring.mail.username=
 spring.mail.password=

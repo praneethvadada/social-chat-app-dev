@@ -21,6 +21,10 @@ spring:
               - http://172.2*:*
               - http://172.30.*:*
               - http://172.31.*:*
+              # Production web deployment (Hostinger VPS)
+              - https://www.rchat.revolutionworldinc.com
+              - https://rchat.revolutionworldinc.com
+              - https://*.revolutionworldinc.com
             allowed-methods:
               - GET
               - POST
