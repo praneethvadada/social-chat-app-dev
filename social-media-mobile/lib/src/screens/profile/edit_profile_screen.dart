@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
-import 'dart:io';
 import 'dart:typed_data';
 import 'profile_image_cropper.dart';
 import '../../components/custom_text_field.dart';
+import '../../components/media_picker.dart' show MediaPicker;
 import '../../theme/colors.dart';
 import '../../services/api_service.dart';
 
@@ -32,7 +31,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late final TextEditingController _usernameCtrl;
   late final TextEditingController _bioCtrl;
   bool _isLoading = false;
-  File? _selectedImage;
+  Uint8List? _selectedImageBytes;
   String? _profilePicUrl;
   bool _isUploadingImage = false;
 
@@ -90,6 +89,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       if (pickedFile == null) return;
 
+      // XFile.length() works identically on web and mobile — check before
+      // reading the file at all.
+      if (await pickedFile.length() > MediaPicker.maxFileSizeBytes) {
+        snack.showSnackBar(SnackBar(
+            content: Text('That image is over the ${MediaPicker.maxFileSizeLabel} limit')));
+        return;
+      }
+
       // Read bytes and open in-app cropper (pure Dart, no platform crashes)
       final originalBytes = await pickedFile.readAsBytes();
       final croppedBytes = await Navigator.of(context).push<Uint8List>(
@@ -100,18 +107,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       if (croppedBytes == null) return; // user canceled
 
-      // Save cropped bytes to temp file for upload
-      final tempDir = await getTemporaryDirectory();
-      final croppedPath = '${tempDir.path}/profile_cropped_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final croppedFile = File(croppedPath);
-      await croppedFile.writeAsBytes(croppedBytes, flush: true);
-
+      // Upload straight from the in-memory bytes — no temp file. Writing to
+      // a temp file via dart:io/path_provider (the old approach) throws on
+      // Flutter Web, which has no filesystem; this works identically on
+      // both web and mobile.
       setState(() {
-        _selectedImage = croppedFile;
+        _selectedImageBytes = croppedBytes;
         _isUploadingImage = true;
       });
 
-      final uploadedUrl = await ApiService.uploadImage(croppedFile.path);
+      final uploadedUrl = await ApiService.uploadImageBytes(croppedBytes, filename: 'profile.jpg');
       
       if (mounted) {
         setState(() {
@@ -228,10 +233,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                     backgroundColor: AppColors.border,
                                     child: const CircularProgressIndicator(),
                                   )
-                                : _selectedImage != null
+                                : _selectedImageBytes != null
                                     ? CircleAvatar(
                                         radius: 54,
-                                        backgroundImage: FileImage(_selectedImage!),
+                                        backgroundImage: MemoryImage(_selectedImageBytes!),
                                       )
                                     : _profilePicUrl != null && _profilePicUrl!.isNotEmpty
                                         ? CircleAvatar(

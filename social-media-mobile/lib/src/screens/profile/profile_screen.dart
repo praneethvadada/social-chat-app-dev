@@ -1,9 +1,7 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../config/api_config.dart';
 import 'edit_profile_screen.dart';
@@ -18,6 +16,7 @@ import '../../state/app_state_manager.dart';
 import '../../state/saved_posts_notifier.dart';
 import '../../utils/friendly_error.dart';
 import '../../components/squircle_avatar.dart';
+import '../../components/media_picker.dart' show MediaPicker;
 import '../../responsive/desktop_content_wrapper.dart';
 import '../../responsive/breakpoints.dart';
 import '../../models/group.dart';
@@ -308,14 +307,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> with AutomaticKee
       );
       if (picked == null) return;
 
+      if (await picked.length() > MediaPicker.maxFileSizeBytes) {
+        snack.showSnackBar(SnackBar(
+            content: Text('That image is over the ${MediaPicker.maxFileSizeLabel} limit')));
+        return;
+      }
+
+      // Upload straight from the in-memory bytes — no temp file. Writing to
+      // a temp file via dart:io/path_provider (the old approach) throws on
+      // Flutter Web, which has no filesystem; this works identically on
+      // both web and mobile.
       final bytes = await picked.readAsBytes();
-      final tempDir = await getTemporaryDirectory();
-      final tempPath = '${tempDir.path}/cover_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final tempFile = File(tempPath);
-      await tempFile.writeAsBytes(bytes, flush: true);
 
       setState(() => _isUploadingCover = true);
-      final url = await ApiService.uploadImage(tempFile.path);
+      final url = await ApiService.uploadImageBytes(bytes, filename: 'cover.jpg');
       await ApiService.updateMyProfile(coverPhotoUrl: url);
 
       if (mounted) {

@@ -2,6 +2,7 @@ package com.socialmedia.social.service;
 
 import com.socialmedia.social.dto.FollowerResponse;
 import com.socialmedia.social.dto.FollowerStatsResponse;
+import com.socialmedia.social.dto.UserSearchResult;
 import com.socialmedia.social.entity.Follower;
 import com.socialmedia.social.entity.UserProfile;
 import com.socialmedia.social.repository.FollowerRepository;
@@ -12,6 +13,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -92,20 +96,46 @@ public class FollowerService {
     
     public Page<FollowerResponse> getFollowers(Long userId, Pageable pageable) {
         Page<Follower> followers = followerRepository.findByFollowingId(userId, pageable);
-        return followers.map(f -> new FollowerResponse(
+        Map<Long, UserSearchResult> profiles = fetchProfiles(
+            followers.stream().map(Follower::getFollowerId).toList());
+        return followers.map(f -> enrich(new FollowerResponse(
             f.getId(),
-            f.getFollowerId(), 
+            f.getFollowerId(),
             f.getCreatedAt()
-        ));
+        ), profiles));
     }
-    
+
     public Page<FollowerResponse> getFollowing(Long userId, Pageable pageable) {
         Page<Follower> following = followerRepository.findByFollowerId(userId, pageable);
-        return following.map(f -> new FollowerResponse(
+        Map<Long, UserSearchResult> profiles = fetchProfiles(
+            following.stream().map(Follower::getFollowingId).toList());
+        return following.map(f -> enrich(new FollowerResponse(
             f.getId(),
             f.getFollowingId(),
             f.getCreatedAt()
-        ));
+        ), profiles));
+    }
+
+    // Batch-fetches profile info (name/username/avatar) for a page of
+    // followers/following in one query instead of one-per-row, then stamps
+    // it onto the bare follow-relationship record. Previously
+    // FollowerResponse carried no name at all, which is why the frontend's
+    // "Online now" panel always fell back to the literal string "User".
+    private Map<Long, UserSearchResult> fetchProfiles(List<Long> userIds) {
+        if (userIds.isEmpty()) return Map.of();
+        return userProfileService.getUserProfilesByIds(userIds, null).stream()
+            .collect(Collectors.toMap(UserSearchResult::getUserId, Function.identity()));
+    }
+
+    private FollowerResponse enrich(FollowerResponse response, Map<Long, UserSearchResult> profiles) {
+        UserSearchResult profile = profiles.get(response.getUserId());
+        if (profile != null) {
+            response.setUsername(profile.getUsername());
+            response.setFullName(profile.getFullName());
+            response.setProfilePictureUrl(profile.getProfilePictureUrl());
+            response.setIsVerified(profile.getIsVerified());
+        }
+        return response;
     }
     
     public FollowerStatsResponse getFollowerStats(Long targetUserId, Long requestingUserId) {
@@ -138,11 +168,13 @@ public class FollowerService {
     
     public Page<FollowerResponse> getMutualFollowers(Long userId, Pageable pageable) {
         Page<Follower> mutuals = followerRepository.findMutualFollowers(userId, pageable);
-        return mutuals.map(f -> new FollowerResponse(
+        Map<Long, UserSearchResult> profiles = fetchProfiles(
+            mutuals.stream().map(Follower::getFollowingId).toList());
+        return mutuals.map(f -> enrich(new FollowerResponse(
             f.getId(),
             f.getFollowingId(),
             f.getCreatedAt()
-        ));
+        ), profiles));
     }
     
     public boolean areMutualFollowers(Long userId1, Long userId2) {

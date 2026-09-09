@@ -331,6 +331,12 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
     );
   }
 
+  void _showTooLarge(String fileName) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('"$fileName" is over the ${MediaPicker.maxFileSizeLabel} limit and was not added')),
+    );
+  }
+
   /// Shared by every "pick multiple images" entry point (the bottom sheet
   /// and the Photo action pill) — passes the *remaining* slot count to the
   /// OS picker itself (so a single picking session can't alone exceed the
@@ -340,9 +346,18 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
       _showMediaLimitReached();
       return;
     }
-    final items = await _mediaPicker.pickImages(limit: _remainingMediaSlots);
-    if (items.isEmpty || !mounted) return;
-    setState(() => _selected.addAll(items));
+    final result = await _mediaPicker.pickImages(limit: _remainingMediaSlots);
+    if (!mounted) return;
+    if (result.items.isNotEmpty) setState(() => _selected.addAll(result.items));
+    if (result.skippedForSize.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.skippedForSize.length == 1
+              ? '"${result.skippedForSize.first}" is over the ${MediaPicker.maxFileSizeLabel} limit and was not added'
+              : '${result.skippedForSize.length} files were over the ${MediaPicker.maxFileSizeLabel} limit and were not added'),
+        ),
+      );
+    }
   }
 
   /// Shared by every "add one item" entry point (pick/take video, take
@@ -352,9 +367,13 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
       _showMediaLimitReached();
       return;
     }
-    final item = await picker();
-    if (item == null || !mounted) return;
-    setState(() => _selected.add(item));
+    try {
+      final item = await picker();
+      if (item == null || !mounted) return;
+      setState(() => _selected.add(item));
+    } on MediaTooLargeException catch (e) {
+      if (mounted) _showTooLarge(e.fileName);
+    }
   }
 
   Future<void> _openPickerSheet() async {
@@ -785,6 +804,13 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen>
                               Text('Add photos or videos',
                                   style: TextStyle(
                                       color: theme.textTheme.bodyMedium?.color)),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Up to ${MediaPicker.maxImagesPerPost} files, ${MediaPicker.maxFileSizeLabel} each',
+                                style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: AppColors.mutedSolid),
+                              ),
                             ],
                           ),
                         ),
