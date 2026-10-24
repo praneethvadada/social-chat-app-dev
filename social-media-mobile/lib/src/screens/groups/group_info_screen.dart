@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../config/api_config.dart';
 import '../../models/group.dart';
 import '../../services/api_service.dart';
 import '../../services/group_api.dart';
@@ -25,7 +26,7 @@ class GroupInfoScreen extends StatefulWidget {
 
 class _GroupInfoScreenState extends State<GroupInfoScreen> {
   /// Deep-link prefix shown with the invite code (host app resolves it).
-  static const _inviteBase = 'https://socialchat.app/group/';
+  static const _inviteBase = '${ApiConfig.webDomain}/group/';
 
   List<GroupMember> _members = [];
   /// G3: active group bans (admins only; empty for regular members).

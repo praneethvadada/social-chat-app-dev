@@ -119,7 +119,7 @@ class CallApi {
       final headers = <String, String>{};
       if (token != null) headers['Authorization'] = 'Bearer $token';
 
-      print('[CallApi] fetchCallHistory: token=${token?.substring(0, 20)}..., headers=$headers, url=$uri');
+      print('[CallApi] fetchCallHistory: authenticated=${token != null}, url=$uri');
 
       final res = await http.get(uri, headers: headers);
       print('[CallApi] fetchCallHistory: response status=${res.statusCode}, body=${res.body}');

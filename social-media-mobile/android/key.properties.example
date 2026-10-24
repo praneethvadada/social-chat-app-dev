@@ -1,0 +1,13 @@
+# Copy to android/key.properties (git-ignored) and fill in your upload key.
+# Never commit key.properties or the .jks file. Back both up somewhere safe:
+# losing the upload key means you can't publish updates until Google resets it.
+#
+# Create the keystore once with:
+#   keytool -genkey -v -keystore ~/upload-keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+#
+# storeFile is resolved relative to android/app/, or use an absolute path.
+# On Windows use forward slashes, e.g. C:/Users/<you>/upload-keystore.jks
+storePassword=
+keyPassword=
+keyAlias=upload
+storeFile=/Users/<you>/upload-keystore.jks
