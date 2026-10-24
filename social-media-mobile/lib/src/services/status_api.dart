@@ -91,7 +91,7 @@ class StatusApi {
   /// Returns null when the status is gone (expired or deleted) or the caller
   /// may not see it, so callers can show a plain message instead of an error.
   static Future<UserStatusGroup?> fetchOne(int statusId) async {
-    final res = await http.get(Uri.parse('$_base/statuses/$statusId'),
+    final res = await http.get(Uri.parse('$_base/$statusId'),
         headers: await _headers());
     if (res.statusCode == 404 || res.statusCode == 403) return null;
     if (res.statusCode != 200) {

@@ -1,5 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:provider/provider.dart' as provider;
 import 'src/app.dart';
@@ -168,6 +170,20 @@ Future<void> _initializeAppInBackground(ChatStore chatStore) async {
 }
 
 Future<void> main() async {
+  // Release builds swallow every print(): the app's debug logging includes
+  // auth tokens, message bodies and other personal data, and print() still
+  // reaches logcat in release. Debug/profile builds keep full logging.
+  if (kReleaseMode) {
+    await runZoned(
+      _main,
+      zoneSpecification: ZoneSpecification(print: (_, __, ___, ____) {}),
+    );
+  } else {
+    await _main();
+  }
+}
+
+Future<void> _main() async {
   // ⚡ MINIMAL INITIALIZATION - Show UI immediately!
   WidgetsFlutterBinding.ensureInitialized();
   print('\n\n===== [MAIN] ===== APP STARTING (Fast Mode) =====');
