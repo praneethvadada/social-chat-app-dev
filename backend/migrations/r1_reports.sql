@@ -1,7 +1,8 @@
 -- R1: user reports of users, posts and comments (Play Store UGC policy).
--- Lives in auth_db (owned by social-service). Hibernate ddl-auto=update creates
--- the same table on startup; this script is for running it by hand.
-USE auth_db;
+-- Lives in social_posts_db (social-service's database in production).
+-- Hibernate ddl-auto=update creates the same table on startup; this script is
+-- for running it by hand.
+USE social_posts_db;
 
 CREATE TABLE IF NOT EXISTS reports (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
