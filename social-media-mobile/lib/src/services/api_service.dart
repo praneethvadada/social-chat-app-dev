@@ -2407,38 +2407,37 @@ class ApiService {
   }
 
   /// Save FCM token to backend for push notifications
+  /// Registers this device's FCM token for the logged-in user.
+  ///
+  /// Goes through social-service's JWT-authenticated /fcm-token, which
+  /// forwards to auth-service with the internal-service secret. auth-service's
+  /// own /users/{id}/fcm-token is internal-only (403 for app clients).
+  ///
+  /// Web never registers: it has no push set up (no Firebase messaging
+  /// service worker), and the backend keeps ONE token per user, so a web
+  /// login would replace the phone's token and silence its notifications.
   static Future<void> saveFCMToken(String token) async {
+    if (kIsWeb) return;
     try {
       print('[API] DEBUG: saveFCMToken() called with token length: ${token.length}');
-      
+
       final authToken = await getToken();
       print('[API] DEBUG: Auth token retrieved: ${authToken != null ? 'YES' : 'NO'}');
-      
+
       if (authToken == null) {
         print('[API] ℹ️ Not authenticated, skipping FCM token save');
         return;
       }
 
-      // Get current user ID from token
-      final userId = await getUserId();
-      print('[API] DEBUG: User ID retrieved: $userId');
-      
-      if (userId == null) {
-        print('[API] ❌ Cannot determine user ID for FCM token save');
-        return;
-      }
-
-      print('[API] 🔄 Saving FCM token to backend for user $userId...');
-      print('[API] DEBUG: Endpoint URL: $baseUrl/auth/users/$userId/fcm-token');
-      print('[API] DEBUG: Request body: {"fcmToken": "${token.length > 20 ? token.substring(0, 20) : token}..."}');
+      print('[API] 🔄 Saving FCM token to backend...');
 
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/users/$userId/fcm-token'),
+        Uri.parse('$baseUrl/social/fcm-token'),
         headers: {
           'Authorization': 'Bearer $authToken',
           'Content-Type': 'application/json',
         },
-        body: json.encode({'fcmToken': token}),
+        body: json.encode({'token': token}),
       );
 
       print('[API] DEBUG: Response status code: ${response.statusCode}');

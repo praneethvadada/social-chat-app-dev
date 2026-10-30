@@ -13,8 +13,6 @@ import '../screens/chats/chat_screen.dart';
 import '../screens/post_detail/post_detail_screen.dart';
 import '../screens/profile/user_profile_screen.dart';
 import '../navigation/root_navigator_key.dart';
-import 'package:uuid/uuid.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 /// Handle background messages - MUST be top-level function with @pragma
 /// This is called by native Firebase code
@@ -140,47 +138,15 @@ class FirebaseMessagingService {
         await ApiService.saveFCMToken(token);
         print('[FCM] ✅ ========== TOKEN SYNC COMPLETE ==========');
       } else {
+        // No placeholder token: the backend keeps one token per user, so a
+        // fake one would overwrite the user's working token on another device.
         print('[FCM] ❌ NO TOKEN AVAILABLE AFTER ALL ATTEMPTS! Cannot sync');
-        print('[FCM] ⚠️ Fallback: Generating local UUID as placeholder token...');
-        
-        // Fallback: Generate a local UUID if Firebase fails completely (better than nothing)
-        try {
-          // Use device ID + timestamp as fallback token
-          final deviceId = await _getDeviceId();
-          final fallbackToken = 'local_${deviceId}_${DateTime.now().millisecondsSinceEpoch}';
-          print('[FCM] 🆔 Generated fallback token: $fallbackToken');
-          await ApiService.saveFCMToken(fallbackToken);
-          print('[FCM] ✅ Fallback token saved');
-        } catch (fallbackError) {
-          print('[FCM] ❌ Fallback also failed: $fallbackError');
-        }
-        
         print('[FCM] ❌ ========== TOKEN SYNC FAILED ==========');
       }
     } catch (e) {
       print('[FCM] ❌ ERROR DURING TOKEN SYNC: $e');
       print('[FCM] ❌ Stack trace: ${StackTrace.current}');
       print('[FCM] ❌ ========== TOKEN SYNC FAILED WITH EXCEPTION ==========');
-    }
-  }
-
-  /// Get device ID as fallback
-  static Future<String> _getDeviceId() async {
-    try {
-      // Try to get device ID from SharedPreferences if we've cached it
-      final prefs = await SharedPreferences.getInstance();
-      String? cachedId = prefs.getString('_device_id');
-      if (cachedId != null && cachedId.isNotEmpty) {
-        return cachedId;
-      }
-      
-      // Generate a new one
-      final uuid = const Uuid().v4();
-      await prefs.setString('_device_id', uuid);
-      return uuid;
-    } catch (e) {
-      print('[FCM] ⚠️ Could not get device ID: $e');
-      return 'unknown_device';
     }
   }
 
