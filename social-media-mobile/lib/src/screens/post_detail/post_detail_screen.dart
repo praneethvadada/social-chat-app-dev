@@ -19,6 +19,7 @@ import '../../state/saved_posts_notifier.dart';
 import '../../responsive/desktop_content_wrapper.dart';
 import '../../components/natural_image.dart';
 import '../../components/post_media_carousel.dart';
+import '../../components/report_sheet.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
 class PostDetailScreen extends ConsumerStatefulWidget {
@@ -366,6 +367,17 @@ class _PostDetailMenuState extends ConsumerState<_PostDetailMenu> {
           }
           return;
         }
+        if (value == 'report' && !isAuthor) {
+          final blocked = await showReportSheet(
+            context,
+            target: ReportTarget.post,
+            targetId: post.id,
+            blockUserId: post.userId,
+            blockUserName: post.authorName,
+          );
+          if (blocked && context.mounted) Navigator.of(context).pop();
+          return;
+        }
         if (value == 'share') {
           final text = post.content + (post.imageUrls.isNotEmpty ? '\n${post.imageUrls.first}' : '');
               await SharePlus.instance.share(ShareParams(text: text));
@@ -382,6 +394,7 @@ class _PostDetailMenuState extends ConsumerState<_PostDetailMenu> {
         } else {
           return [
             const PopupMenuItem(value: 'share', child: Text('Share')),
+            const PopupMenuItem(value: 'report', child: Text('Report')),
           ];
         }
       },

@@ -50,12 +50,14 @@ class DefaultFirebaseOptions {
     measurementId: 'G-6P944ZSXY1',
   );
 
+  // Android uses the revolutionmedia Firebase project (owned by the
+  // Play Console account); web/iOS stay on social-chat-app-e2115.
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCGkKYtExMt4PIhzqBvOdTAz18EaQlhPLs',
-    appId: '1:900647534857:android:7c00f8e0254138544293d8',
-    messagingSenderId: '900647534857',
-    projectId: 'social-chat-app-e2115',
-    storageBucket: 'social-chat-app-e2115.firebasestorage.app',
+    apiKey: 'AIzaSyAGQ0Zai8CAHLvCw9M9fgmlMRVZAwha0gw',
+    appId: '1:865545763718:android:c1a2ab0f85911c84ea0a07',
+    messagingSenderId: '865545763718',
+    projectId: 'revolutionmedia-fc2d9',
+    storageBucket: 'revolutionmedia-fc2d9.firebasestorage.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(

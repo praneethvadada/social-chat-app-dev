@@ -9,6 +9,7 @@ import '../../database/local_chat_repository.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import '../../components/report_sheet.dart';
 import '../../config/api_config.dart';
 import '../../models/message.dart';
 import '../../models/chat.dart';
@@ -865,6 +866,23 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> with WidgetsBinding
           IconButton(
             icon: const Icon(Icons.videocam, color: AppColors.primary),
             onPressed: () => _startCall(conv.userId, true),
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: AppColors.primary),
+            onSelected: (value) {
+              if (value == 'report') {
+                showReportSheet(
+                  context,
+                  target: ReportTarget.user,
+                  targetId: conv.userId,
+                  blockUserId: conv.userId,
+                  blockUserName: conv.fullName,
+                );
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'report', child: Text('Report')),
+            ],
           ),
         ],
       ),

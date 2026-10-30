@@ -2270,6 +2270,41 @@ class ApiService {
 
   // ==================== BLOCK USER METHODS ====================
 
+  /// Report a user, post or comment for moderator review.
+  ///
+  /// [targetType] is 'USER', 'POST' or 'COMMENT'; [reason] is one of the
+  /// backend's Report.Reason names (SPAM, HARASSMENT, ...). Returns true when
+  /// this user had already reported the same target (still a success).
+  static Future<bool> reportContent({
+    required String targetType,
+    required int targetId,
+    required String reason,
+    String? details,
+  }) async {
+    final token = await getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/social/reports'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: json.encode({
+        'targetType': targetType,
+        'targetId': targetId,
+        'reason': reason,
+        if (details != null && details.trim().isNotEmpty) 'details': details.trim(),
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return data is Map && data['alreadyReported'] == true;
+    }
+    throw Exception(_extractErrorMessage(response, 'Failed to send report'));
+  }
+
   static Future<void> blockUser(int userId, {String? reason}) async {
     final token = await getToken();
     if (token == null) throw Exception('Not authenticated');

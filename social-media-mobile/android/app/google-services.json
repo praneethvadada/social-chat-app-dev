@@ -1,21 +1,21 @@
 {
   "project_info": {
-    "project_number": "900647534857",
-    "project_id": "social-chat-app-e2115",
-    "storage_bucket": "social-chat-app-e2115.firebasestorage.app"
+    "project_number": "865545763718",
+    "project_id": "revolutionmedia-fc2d9",
+    "storage_bucket": "revolutionmedia-fc2d9.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:900647534857:android:7c00f8e0254138544293d8",
+        "mobilesdk_app_id": "1:865545763718:android:c1a2ab0f85911c84ea0a07",
         "android_client_info": {
-          "package_name": "com.example.social_chat_app"
+          "package_name": "com.revolutionmedia.app"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyCGkKYtExMt4PIhzqBvOdTAz18EaQlhPLs"
+          "current_key": "AIzaSyAGQ0Zai8CAHLvCw9M9fgmlMRVZAwha0gw"
         }
       ],
       "services": {

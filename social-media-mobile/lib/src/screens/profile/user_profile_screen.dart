@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../components/report_sheet.dart';
 import '../../models/post.dart';
 import '../../services/api_service.dart';
 import '../../services/post_service.dart';
@@ -388,10 +389,15 @@ class _UserProfileScreenState extends ConsumerState<UserProfileScreen> with Widg
                             if (value == 'block') {
                               await _showBlockConfirmation();
                             } else if (value == 'report') {
-                              // TODO: Implement report functionality
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Report feature coming soon')),
+                              final blocked = await showReportSheet(
+                                context,
+                                target: ReportTarget.user,
+                                targetId: widget.userId,
+                                blockUserId: widget.userId,
+                                blockUserName: '@$_username',
                               );
+                              // Same as blocking from this menu: the profile is gone for them.
+                              if (blocked && context.mounted) Navigator.pop(context);
                             }
                           },
                           itemBuilder: (context) => [

@@ -6,6 +6,7 @@ import '../../services/post_interaction_service.dart';
 import '../../services/api_service.dart';
 import '../../services/user_profile_cache.dart';
 import '../../components/mentionable_text.dart';
+import '../../components/report_sheet.dart';
 import '../../responsive/desktop_content_wrapper.dart';
 import 'package:social_chat_app/src/theme/colors.dart';
 
@@ -417,6 +418,8 @@ class _CommentTileState extends State<_CommentTile> {
                             ),
                           ),
                         ),
+                        const SizedBox(width: 16),
+                        _ReportCommentLink(comment: widget.comment),
                       ],
                     ),
                   ],
@@ -565,6 +568,8 @@ class _ReplyTileState extends State<_ReplyTile> {
                         ],
                       ),
                     ),
+                    const SizedBox(width: 12),
+                    _ReportCommentLink(comment: widget.reply, fontSize: 11),
                   ],
                 ),
               ],
@@ -572,6 +577,49 @@ class _ReplyTileState extends State<_ReplyTile> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// "Report" link on someone else's comment or reply; hidden on your own.
+class _ReportCommentLink extends StatefulWidget {
+  final Comment comment;
+  final double? fontSize;
+
+  const _ReportCommentLink({required this.comment, this.fontSize});
+
+  @override
+  State<_ReportCommentLink> createState() => _ReportCommentLinkState();
+}
+
+class _ReportCommentLinkState extends State<_ReportCommentLink> {
+  late final Future<int?> _myUserId = ApiService.getUserId();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return FutureBuilder<int?>(
+      future: _myUserId,
+      builder: (context, snapshot) {
+        final myId = snapshot.data;
+        if (myId == null || myId == widget.comment.userId) return const SizedBox.shrink();
+        return GestureDetector(
+          onTap: () => showReportSheet(
+            context,
+            target: ReportTarget.comment,
+            targetId: widget.comment.id,
+            blockUserId: widget.comment.userId,
+            blockUserName: widget.comment.authorName,
+          ),
+          child: Text(
+            'Report',
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: widget.fontSize,
+              color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.7),
+            ),
+          ),
+        );
+      },
     );
   }
 }

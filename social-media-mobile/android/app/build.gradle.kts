@@ -39,8 +39,14 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.social_chat_app"
+        // The Play Store package name. Must match the existing Play Console app,
+        // which already has a bundle uploaded under this name (package names
+        // can't change after the first upload). The namespace above stays
+        // com.example.social_chat_app: it only names the Kotlin/Java classes
+        // and is never shown on Play.
+        // google-services.json and firebase_options.dart must have an Android
+        // app registered under this ID, or Firebase/FCM won't work.
+        applicationId = "com.revolutionmedia.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

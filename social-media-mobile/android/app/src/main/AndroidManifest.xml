@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Permissions required for audio/video calls -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -10,20 +11,27 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Permissions for foreground service (call notification) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Only mediaPlayback: CallNotificationService plays the incoming-call
+         ringtone. Each foreground service type must be declared (with a demo
+         video) in Play Console, so don't add types the code doesn't start. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- Agora's bundled screen-sharing extension adds a mediaProjection
+         service; the app never shares the screen, so strip it (and the
+         service below) rather than declare screen capture to Play. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" tools:node="remove" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Permission to wake screen for incoming calls -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <application
         android:label="Revolution Chat"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true"
         android:networkSecurityConfig="@xml/network_security_config">
+        <service
+            android:name="io.agora.rtc2.extensions.MediaProjectionMgr$LocalScreenSharingService"
+            tools:node="remove" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -84,7 +92,7 @@
             android:name=".CallNotificationService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="mediaPlayback|microphone" />
+            android:foregroundServiceType="mediaPlayback" />
         
         <!-- Broadcast receiver for call notification actions -->
         <receiver

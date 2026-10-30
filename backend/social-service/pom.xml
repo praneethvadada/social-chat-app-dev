@@ -76,11 +76,8 @@
             <artifactId>firebase-admin</artifactId>
             <version>9.2.0</version>
         </dependency>
-        <!-- RestTemplate for inter-service communication -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
+        <!-- RestTemplate for inter-service communication comes from
+             spring-boot-starter-web, declared at the top. -->
         <!-- AWS S3 for file storage (S3Presigner ships bundled in this same artifact) -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>

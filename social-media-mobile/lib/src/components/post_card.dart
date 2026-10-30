@@ -24,6 +24,7 @@ import 'mentionable_text.dart';
 import 'squircle_avatar.dart';
 import 'natural_image.dart';
 import 'post_media_carousel.dart';
+import 'report_sheet.dart';
 
 /// Reference-style "kind" label — Poll/Event take priority (they're an
 /// explicit backend type), otherwise Photo/Video/Note is derived from what
@@ -595,6 +596,16 @@ class _PostHeaderState extends ConsumerState<_PostHeader> {
                 }
                 return;
               }
+              if (value == 'report' && !isAuthor) {
+                await showReportSheet(
+                  context,
+                  target: ReportTarget.post,
+                  targetId: post.id,
+                  blockUserId: post.userId,
+                  blockUserName: post.authorName,
+                );
+                return;
+              }
               if (value == 'share') {
                 final text = post.content + (post.imageUrls.isNotEmpty ? '\n${post.imageUrls.first}' : '');
                 await SharePlus.instance.share(ShareParams(text: text));
@@ -611,6 +622,7 @@ class _PostHeaderState extends ConsumerState<_PostHeader> {
               } else {
                 return [
                   const PopupMenuItem(value: 'share', child: Text('Share')),
+                  const PopupMenuItem(value: 'report', child: Text('Report')),
                 ];
               }
             },
